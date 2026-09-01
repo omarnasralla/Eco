@@ -359,10 +359,24 @@ export function financialHealthScore(s: FinancialSnapshot): {
     s.monthlyExpensesMinor > 0 ? s.liquidSavingsMinor / s.monthlyExpensesMinor : 0;
   const bufferScore = clamp((bufferMonths / 6) * 100, 0, 100);
 
-  const totalDebt = s.debts.reduce((sum, d) => sum + d.currentBalanceMinor, 0);
-  const annualIncome = s.monthlyIncomeMinor * 12;
-  const debtRatio = annualIncome > 0 ? totalDebt / annualIncome : totalDebt > 0 ? 2 : 0;
-  const debtScore = clamp(100 - (debtRatio / 0.4) * 100, 0, 100);
+  /*
+   * Debt is scored on payment burden, not balance.
+   *
+   * Balance-to-income scores anyone with a mortgage at zero — a £250k mortgage
+   * against a £50k salary is 500%, which says nothing about whether the debt is
+   * manageable. Lenders use debt-to-income on *payments* for exactly that
+   * reason, and the thresholds are well established: under 20% is comfortable,
+   * 36% is the conventional ceiling, 43% is where lending stops.
+   */
+  const monthlyDebtPayments = s.debts.reduce((sum, d) => sum + d.minimumPaymentMinor, 0);
+  const dti =
+    s.monthlyIncomeMinor > 0
+      ? monthlyDebtPayments / s.monthlyIncomeMinor
+      : monthlyDebtPayments > 0
+        ? 1
+        : 0;
+  // Full marks below 20%, zero at 43%, linear between.
+  const debtScore = dti <= 0.2 ? 100 : clamp(100 - ((dti - 0.2) / 0.23) * 100, 0, 100);
 
   const shortfalls = s.forecast.filter((p) => p.isShortfall).length;
   const stabilityScore = clamp(100 - shortfalls * 25, 0, 100);
@@ -370,7 +384,15 @@ export function financialHealthScore(s: FinancialSnapshot): {
   const components = [
     { name: 'Savings rate', score: Math.round(savingsScore), weight: 0.3, detail: `${rate}% of income saved` },
     { name: 'Emergency buffer', score: Math.round(bufferScore), weight: 0.25, detail: `${bufferMonths.toFixed(1)} months of expenses covered` },
-    { name: 'Debt load', score: Math.round(debtScore), weight: 0.25, detail: `Debt is ${Math.round(debtRatio * 100)}% of annual income` },
+    {
+      name: 'Debt load',
+      score: Math.round(debtScore),
+      weight: 0.25,
+      detail:
+        monthlyDebtPayments > 0
+          ? `Debt payments are ${Math.round(dti * 100)}% of your income`
+          : 'No debt payments',
+    },
     { name: 'Cash-flow stability', score: Math.round(stabilityScore), weight: 0.2, detail: shortfalls > 0 ? `${shortfalls} shortfall month(s) projected` : 'No shortfalls projected' },
   ];
 

@@ -1,0 +1,6 @@
+-r requirements.txt
+
+pytest==8.3.4
+pytest-asyncio==0.25.0
+# TestClient in tests/test_api.py needs Starlette's test transport.
+httpx==0.28.1

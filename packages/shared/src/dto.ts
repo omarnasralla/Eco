@@ -234,7 +234,14 @@ export interface DashboardSummaryDto {
   totalIncomeMinor: number;
   totalExpensesMinor: number;
   netCashFlowMinor: number;
+  /**
+   * Averaged over the last three complete months. A month in progress cannot
+   * have a meaningful rate, and a single month is too noisy — one holiday
+   * would swing the headline by fifty points.
+   */
   savingsRatePct: number;
+  /** Human-readable basis, e.g. "2026-06 to 2026-08". */
+  savingsRateBasisMonth: string;
   totalDebtMinor: number;
   totalSavingsMinor: number;
   netWorthMinor: number;

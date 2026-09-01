@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eco-web
+  namespace: eco
+  labels: { app: eco-web }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: { app: eco-web }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: { app: eco-web }
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: eco-web }
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile: { type: RuntimeDefault }
+
+      containers:
+        - name: web
+          image: ghcr.io/eco/web:latest
+          ports:
+            - { name: http, containerPort: 3000 }
+          env:
+            - { name: NODE_ENV, value: production }
+            - { name: PORT, value: "3000" }
+            - { name: HOSTNAME, value: "0.0.0.0" }
+            # Server-side rendering talks to the API over the cluster network;
+            # the browser-facing URL was baked into the bundle at build time.
+            - { name: API_INTERNAL_URL, value: "http://eco-api:4000/api/v1" }
+
+          livenessProbe:
+            httpGet: { path: /login, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /login, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+
+          volumeMounts:
+            - { name: cache, mountPath: /app/apps/web/.next/cache }
+            - { name: tmp, mountPath: /tmp }
+
+      volumes:
+        - { name: cache, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eco-web
+  namespace: eco
+spec:
+  selector: { app: eco-web }
+  ports:
+    - { name: http, port: 3000, targetPort: http }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: eco-web
+  namespace: eco
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: eco-web }
+  minReplicas: 2
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: eco-web
+  namespace: eco
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: eco-web }

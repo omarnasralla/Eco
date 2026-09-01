@@ -1,0 +1,13 @@
+{
+  "name": "Eco — Personal Finance",
+  "short_name": "Eco",
+  "description": "Track income, expenses, debts and goals with an AI that learns your patterns.",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#16a34a",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

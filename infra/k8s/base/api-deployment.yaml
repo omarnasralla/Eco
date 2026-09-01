@@ -1,0 +1,170 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eco-api
+  namespace: eco
+  labels: { app: eco-api }
+spec:
+  replicas: 3
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: { app: eco-api }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Never drop below the desired count during a deploy: the API is the
+      # only path to a user's data, so a rollout must not reduce capacity.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels: { app: eco-api }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4000"
+        prometheus.io/path: "/api/v1/metrics"
+    spec:
+      # Spread replicas across nodes so losing one node cannot take out the
+      # whole deployment.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: eco-api }
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+
+      # Migrations run once per rollout, before any new pod serves traffic.
+      # `migrate deploy` only applies committed migrations — it never generates
+      # or resets, so it is safe to run on every pod start.
+      initContainers:
+        - name: migrate
+          image: ghcr.io/eco/api:latest
+          command: ["npx", "prisma", "migrate", "deploy", "--schema", "apps/api/prisma/schema.prisma"]
+          envFrom:
+            - configMapRef: { name: eco-config }
+            - secretRef: { name: eco-secrets }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+
+      containers:
+        - name: api
+          image: ghcr.io/eco/api:latest
+          ports:
+            - { name: http, containerPort: 4000 }
+          envFrom:
+            - configMapRef: { name: eco-config }
+            - secretRef: { name: eco-secrets }
+          env:
+            - name: CORS_ORIGINS
+              value: "https://app.eco.example.com"
+            - name: WEB_ORIGIN
+              value: "https://app.eco.example.com"
+
+          # Liveness checks only that the process is alive. Making it depend on
+          # Postgres would turn a brief database blip into a cluster-wide
+          # restart loop — precisely when restarting helps least.
+          livenessProbe:
+            httpGet: { path: /api/v1/health/live, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 3
+
+          # Readiness checks the dependencies a request actually needs, so a pod
+          # with a broken database connection leaves the load balancer instead
+          # of serving errors.
+          readinessProbe:
+            httpGet: { path: /api/v1/health/ready, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # Startup probe gives a cold JIT and connection pool time to warm up
+          # without a slack liveness threshold masking real hangs later.
+          startupProbe:
+            httpGet: { path: /api/v1/health/live, port: http }
+            periodSeconds: 5
+            failureThreshold: 24
+
+          resources:
+            requests: { cpu: 200m, memory: 384Mi }
+            limits: { memory: 768Mi }
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+
+          lifecycle:
+            preStop:
+              # Endpoint removal propagates asynchronously; sleeping lets
+              # in-flight requests drain before the process is signalled.
+              exec: { command: ["sh", "-c", "sleep 10"] }
+
+      # Long enough for the preStop sleep plus the slowest report generation.
+      terminationGracePeriodSeconds: 45
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eco-api
+  namespace: eco
+spec:
+  selector: { app: eco-api }
+  ports:
+    - { name: http, port: 4000, targetPort: http }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: eco-api
+  namespace: eco
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: eco-api }
+  minReplicas: 3
+  maxReplicas: 30
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 65 } }
+    - type: Resource
+      resource: { name: memory, target: { type: Utilization, averageUtilization: 75 } }
+  behavior:
+    scaleUp:
+      # Scale out fast: a queue of finance users waiting on a dashboard is a
+      # worse outcome than briefly over-provisioning.
+      stabilizationWindowSeconds: 30
+      policies: [{ type: Percent, value: 100, periodSeconds: 30 }]
+    scaleDown:
+      # Scale in slowly, so a traffic trough does not remove capacity that a
+      # spike five minutes later needs back.
+      stabilizationWindowSeconds: 300
+      policies: [{ type: Pods, value: 1, periodSeconds: 60 }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: eco-api
+  namespace: eco
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: { app: eco-api }

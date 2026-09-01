@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: eco
+  labels:
+    app.kubernetes.io/name: eco
+    # Enforce the restricted Pod Security Standard: no privileged containers,
+    # no host namespaces, no root. Rejected at admission rather than audited
+    # after the fact.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
