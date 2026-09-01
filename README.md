@@ -117,7 +117,7 @@ cd services/ai && .venv/bin/python -m pytest tests/ -q
 | [Roadmap](docs/06-roadmap.md) | MVP scope, phases, scaling to 1M+ users |
 | [Security](docs/07-security.md) | Threat model, OWASP mapping, **known gaps** |
 | [Frontend](08-frontend.md) | Screens, chart method, accessibility |
-| [User guide](docs/09-user-guide.md) | First run on a fresh account, mobile navigation, adding income |
+| [User guide](docs/09-user-guide.md) | First run on a fresh account, phone navigation, recording income |
 
 ## A few decisions worth knowing about
 

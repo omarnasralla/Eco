@@ -1,8 +1,8 @@
 # User guide — first run, mobile navigation, and income
 
-This is the practical companion to the architecture docs: what a brand-new
-account can actually do today, where each screen lives, and what is still
-missing from the web UI. It is written against the code in `apps/web` and
+This is the practical companion to the architecture docs: how to get a
+brand-new account set up, where each screen lives on a phone and on a desktop,
+and how income works. It is written against the code in `apps/web` and
 `apps/api`, not against a roadmap — where the app cannot yet do something, this
 document says so and gives the workaround.
 
@@ -15,46 +15,45 @@ and rendered two ways:
   (`components/layout/sidebar.tsx`) lists **all nine** destinations plus your
   profile and Sign out.
 - **Phone and tablet (below 1024px)** — the bottom tab bar
-  (`components/layout/mobile-nav.tsx`) shows only the five entries flagged
-  `primary: true`. The sidebar is hidden entirely (`hidden … lg:flex`).
+  (`components/layout/mobile-nav.tsx`), where the sidebar is hidden
+  (`hidden … lg:flex`). Five slots: four destinations flagged `primary: true`,
+  and **More**, which opens a sheet holding the other five pages plus your
+  account and Sign out.
 
-| Page | Path | In the phone tab bar? |
+| Page | Path | On a phone |
 |---|---|---|
-| Dashboard | `/dashboard` | Yes |
-| Expenses | `/expenses` | Yes |
-| Eco AI | `/assistant` | Yes |
-| Budgets | `/budgets` | Yes |
-| Debts | `/debts` | Yes |
-| **Income** | `/income` | **No** |
-| **Goals** | `/goals` | **No** |
-| **Reports** | `/reports` | **No** |
-| **Settings** | `/settings` | **No** |
+| Dashboard | `/dashboard` | Tab bar |
+| Expenses | `/expenses` | Tab bar |
+| Eco AI | `/assistant` | Tab bar |
+| Budgets | `/budgets` | Tab bar |
+| Debts | `/debts` | More |
+| Income | `/income` | More |
+| Goals | `/goals` | More |
+| Reports | `/reports` | More |
+| Settings | `/settings` | More |
 
-### Reaching Settings (and Income, Goals, Reports) on a phone
+### Reaching Settings, Income, Goals and Reports on a phone
 
-There is currently **no "More" menu, overflow button, or header link** on
-mobile, so the four non-primary pages have no tap path. Until one is added, use
-one of these:
+**Tap More**, the last tab in the bottom bar. It opens a sheet listing Debts,
+Income, Goals, Reports and Settings, with your account and Sign out beneath
+them. Tapping any row navigates and closes the sheet.
 
-1. **Type the URL.** In your phone browser's address bar, go to
-   `https://<your-eco-host>/settings` — or `/income`, `/goals`, `/reports`.
-   Locally that is `http://localhost:3000/settings`.
-2. **Bookmark or add to the home screen.** The app ships a web manifest
-   (`apps/web/public/manifest.webmanifest`), so "Add to Home Screen" works;
-   add `/settings` and `/income` as separate shortcuts and they become
-   one-tap.
-3. **Rotate a tablet to landscape, or use desktop mode.** The sidebar appears
-   at viewport widths of 1024px and up, and it links to every page. Requesting
-   the desktop site in mobile Safari or Chrome usually crosses that threshold.
+The More tab is highlighted whenever you are on one of the pages it holds, so
+the tab bar never claims you are nowhere.
 
-Signing out is on the Settings page and in the desktop sidebar, so it has the
-same constraint on mobile — reach it via `/settings`.
+Two details worth knowing:
 
-> **Known gap.** Four of nine destinations being unreachable by tap on mobile
-> is a bug, not a design decision; the tab bar's own comment says the rest
-> "lives behind Settings", but Settings is not in the tab bar either. The fix
-> is a fifth "More" tab (or a Settings entry in a header) that opens the
-> non-primary items.
+- **Debts moved into More.** Five slots is the platform maximum before a tap
+  target becomes a guess, and the fifth is now spent on More. Debts is a
+  planning screen visited occasionally rather than a daily-entry one, so it
+  yielded its slot. It is one extra tap away, and unchanged on desktop.
+- **Direct URLs still work** and make good home-screen shortcuts, since the app
+  ships a web manifest (`apps/web/public/manifest.webmanifest`). `/settings`
+  and `/expenses?new=1` are the two worth pinning.
+
+At 1024px and wider — a landscape tablet, or a phone browser set to request the
+desktop site — the tab bar gives way to the sidebar, which lists all nine
+destinations at once.
 
 ## 2. A fresh account, start to finish
 
@@ -73,14 +72,15 @@ same constraint on mobile — reach it via `/settings`.
    everywhere*. Note that the page only **reports** the 2FA state — there is no
    enable button yet; turning it on means calling `POST /auth/2fa/setup` and
    `POST /auth/2fa/enable`.
-5. **Add your income** — see section 3. This matters first because the
+5. **Add your income** at `/income` → *Add* — see section 3. This matters
+   first because the
    dashboard's savings rate, the budget headroom, the debt payoff plans and
    the AI health score all divide by income. With no income recorded, a fresh
    account reports a 0 monthly run rate and every derived figure reads as if
    you earn nothing.
-6. **Add expenses** at `/expenses` → *Add expense*. This is the one entity with
-   a full create form in the web UI. The dialog also opens directly via the
-   deep link `/expenses?new=1`, which is handy as a home-screen shortcut.
+6. **Add expenses** at `/expenses` → *Add*. The dialog also opens directly via
+   the deep link `/expenses?new=1`, which is handy as a home-screen shortcut;
+   `/income?new=1` does the same for income.
 7. **Set a budget** at `/budgets`, and **goals** at `/goals`, once there is
    income and a few weeks of spending for them to be measured against.
 
@@ -89,21 +89,35 @@ seeded automatically at registration — you do not need to create them.
 
 ## 3. Adding income
 
-### What the UI does today
+### In the app
 
-`/income` is **read-only**. It renders your monthly run rate and a list of
-sources; it has no *Add income* button, and neither `apps/web/src/app/(app)/income/page.tsx`
-nor `lib/queries.ts` contains a create mutation. A fresh account therefore sees
-"No income recorded yet." with no way forward from that screen. Expenses is
-currently the only entity with a create form; Income, Goals, Debts and Budgets
-are all view-only in the web app.
+Open `/income` — via **More → Income** on a phone, or the sidebar on desktop —
+and tap **Add**. On a fresh account the empty state carries the same button, so
+there is no dead end to back out of.
 
-> **Known gap.** The API is complete — `POST /income`, `PATCH /income/:id`,
-> `DELETE /income/:id` and `POST /income/:id/receipts` all exist and are
-> audited. Only the client form is missing. Until it lands, use the API
-> directly as below.
+Six fields, and the last three come pre-filled — a name, an amount and a
+frequency is a complete entry:
+
+| Field | What to put |
+|---|---|
+| **Name** | Whatever you will recognise: "Acme Ltd — Salary", "Weekend shifts". |
+| **Amount** | What actually lands in your account — take-home pay, not gross. Nothing is deducted from this figure. Type it in normal units (`3200`, `3200.50`); the form converts to minor units before sending. |
+| **How often** | Monthly, weekly, every two weeks, quarterly, yearly, or a one-off. |
+| **Type** | Salary, freelancing, business, investments, rental, side hustle, other. Defaults to Salary. |
+| **Started on** | When the stream began, even if that was years ago. Defaults to today. |
+| **Notes** | Optional. |
+
+Saving refreshes the run rate, the dashboard, your budget headroom and the
+health score together — income moves all of them, so none is left stale.
+
+To record a second stream, tap **Add** again. Editing and deleting an existing
+source still have no UI; use `PATCH /income/:id` and `DELETE /income/:id` for
+now.
 
 ### Adding income through the API
+
+You do not need this for normal use — it is here for scripting, bulk imports,
+and the operations the UI does not cover yet (editing, deleting, receipts).
 
 In development the interactive Swagger UI at
 `http://localhost:4000/api/v1/docs` is the easiest route: authorise with your
@@ -144,7 +158,9 @@ Reload `/income` and the source, and your monthly run rate, appear.
 
 ### Field reference
 
-Validated by `incomeSourceSchema` in `packages/shared/src/schemas.ts`.
+Validated by `incomeSourceSchema` in `packages/shared/src/schemas.ts`. The form
+fills in `currency`, `isActive` and the minor-unit conversion for you; over the
+API you send them yourself.
 
 | Field | Required | Notes |
 |---|---|---|
@@ -174,8 +190,8 @@ deliberate; a one-off bonus is not a monthly income stream.
 
 A source is the *expectation*. `POST /income/:id/receipts` records an actual
 payment (`amountMinor`, `date`, optional `notes`), which is what the AI layer's
-income-consistency analysis reads to tell steady pay from variable pay. There
-is no UI for this yet either.
+income-consistency analysis reads to tell steady pay from variable pay. There is
+no UI for this yet.
 
 ### Local development shortcut
 
@@ -188,8 +204,10 @@ without entering anything; it is a development fixture, not your account.
 
 | Gap | Impact | Workaround |
 |---|---|---|
-| Settings, Income, Goals, Reports absent from the mobile tab bar | Unreachable by tap below 1024px | Direct URL, home-screen shortcut, or desktop-width viewport |
-| No *Add income* form | A fresh account cannot record income in the UI | `POST /income` via Swagger (`/api/v1/docs`, dev only) or curl |
-| No create UI for Goals, Debts, Budgets | Same | Their `POST` endpoints, documented in `docs/03-api-design.md` |
+| No create UI for Goals, Debts, Budgets | They cannot be set up in the app | Their `POST` endpoints, documented in `docs/03-api-design.md` |
+| No edit or delete UI for income | A typo means fixing it over the API | `PATCH /income/:id`, `DELETE /income/:id` |
 | No UI for income receipts | Income-consistency analysis has no actuals to read | `POST /income/:id/receipts` |
 | Settings reports 2FA state but cannot enable it | Two-factor cannot be turned on from the UI | `POST /auth/2fa/setup` then `POST /auth/2fa/enable` |
+
+Income and mobile navigation were on this list; both are fixed. Expenses and
+income now have create forms, and every page is reachable by tap on a phone.
