@@ -160,7 +160,7 @@ export class IncomeService {
     let total = 0;
     for (const source of sources) {
       const monthly = toMonthlyMinor(toNumber(source.amountMinor), source.frequency);
-      total += await this.currency.convert(monthly, source.currency, userCurrency);
+      total += await this.currency.convertForDisplay(monthly, source.currency, userCurrency);
     }
     return total;
   }

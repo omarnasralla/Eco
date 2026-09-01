@@ -19,6 +19,7 @@ import { IncomeService } from '../income/income.service';
 import { GoalsService } from '../goals/goals.service';
 import { toNumber } from '../../common/utils/money';
 import { monthToDate, todayIso } from '../../common/utils/dates';
+import { CurrencyService } from '../currency/currency.service';
 
 @Injectable()
 export class DashboardService {
@@ -27,6 +28,7 @@ export class DashboardService {
     private readonly redis: RedisService,
     private readonly income: IncomeService,
     private readonly goals: GoalsService,
+    private readonly currency: CurrencyService,
   ) {}
 
   /**
@@ -56,8 +58,8 @@ export class DashboardService {
         this.totalExpenses(userId, targetMonth),
         this.totalExpenses(userId, previousMonth),
         this.income.monthlyTotal(userId, userCurrency),
-        this.totalDebt(userId),
-        this.goals.totalSaved(userId),
+        this.totalDebt(userId, userCurrency),
+        this.goals.totalSaved(userId, userCurrency),
         this.goalCounts(userId),
         this.upcomingBills(userId, 14),
       ]);
@@ -306,12 +308,29 @@ export class DashboardService {
     return toNumber(result._sum.baseAmountMinor ?? BigInt(0));
   }
 
-  private async totalDebt(userId: string): Promise<number> {
-    const result = await this.prisma.debt.aggregate({
+  /**
+   * Outstanding debt in the user's base currency.
+   *
+   * A SQL `SUM` over `currentBalanceMinor` would be faster but silently adds
+   * unlike units — a £5,000 card and a $5,000 loan summing to "10,000" of
+   * whichever currency the page happens to be labelled with. Balances are
+   * current values rather than dated events, so today's rate is the right one.
+   */
+  private async totalDebt(userId: string, userCurrency: string): Promise<number> {
+    const debts = await this.prisma.debt.findMany({
       where: { userId, deletedAt: null, isClosed: false },
-      _sum: { currentBalanceMinor: true },
+      select: { currentBalanceMinor: true, currency: true },
     });
-    return toNumber(result._sum.currentBalanceMinor ?? BigInt(0));
+
+    let total = 0;
+    for (const debt of debts) {
+      total += await this.currency.convertForDisplay(
+        toNumber(debt.currentBalanceMinor),
+        debt.currency,
+        userCurrency,
+      );
+    }
+    return total;
   }
 
   private async goalCounts(userId: string): Promise<{ onTrack: number; total: number }> {

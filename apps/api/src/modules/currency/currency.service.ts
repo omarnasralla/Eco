@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { CACHE_TTL_SECONDS, convertMinor, type ExchangeRateDto } from '@eco/shared';
+import { CACHE_TTL_SECONDS, CURRENCIES, convertMinor, type ExchangeRateDto } from '@eco/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 
@@ -74,6 +74,13 @@ export class CurrencyService {
    * Converts minor units between currencies at a given date's rate.
    * Same-currency conversion short-circuits — by far the common case, and it
    * must never be perturbed by a rounding step.
+   *
+   * Throws when a rate is genuinely missing. It is tempting to fall back to the
+   * unconverted figure, but that is the worst available answer: 1,000,000 LBP
+   * would be written to `baseAmountMinor` as though it were $10,000, and once a
+   * wrong number is frozen onto the row every dashboard, budget and report
+   * silently inherits it. Refusing the write is recoverable; corrupt history is
+   * not.
    */
   async convert(
     amountMinor: number,
@@ -86,8 +93,32 @@ export class CurrencyService {
     try {
       return convertMinor(amountMinor, from, to, rates);
     } catch (error) {
+      this.logger.error(`Conversion ${from}→${to} failed: ${(error as Error).message}`);
+      throw new ServiceUnavailableException(
+        `No exchange rate is available for ${from}→${to} right now, so this amount cannot be ` +
+          `recorded accurately. Please try again shortly.`,
+      );
+    }
+  }
+
+  /**
+   * Lenient conversion for read-only aggregates, where one unconvertible stream
+   * should not take down the whole summary. Nothing computed here is persisted,
+   * so a slightly wrong total is preferable to an error page.
+   */
+  async convertForDisplay(
+    amountMinor: number,
+    from: string,
+    to: string,
+    date?: string,
+  ): Promise<number> {
+    if (from === to) return amountMinor;
+    const { rates } = await this.getRates(date);
+    try {
+      return convertMinor(amountMinor, from, to, rates);
+    } catch (error) {
       this.logger.warn(
-        `Conversion ${from}→${to} failed (${(error as Error).message}); storing unconverted`,
+        `Display conversion ${from}→${to} failed (${(error as Error).message}); using face value`,
       );
       return amountMinor;
     }
@@ -117,6 +148,19 @@ export class CurrencyService {
 
       await this.redis.delPattern('fx:*');
       this.logger.log(`Refreshed ${Object.keys(rates).length} exchange rates from ${provider}`);
+
+      // A provider that silently omits a currency we offer is the failure that
+      // is hardest to notice: everything looks healthy until someone records an
+      // expense in it. Name the gap at refresh time, not at write time.
+      const uncovered = CURRENCIES.map((c) => c.code).filter(
+        (code) => code !== this.base && rates[code] === undefined,
+      );
+      if (uncovered.length > 0) {
+        this.logger.warn(
+          `Provider "${provider}" quotes no rate for ${uncovered.join(', ')} — ` +
+            `amounts in those currencies will be rejected rather than mis-converted.`,
+        );
+      }
     } catch (error) {
       // Stale rates are far better than a crashed scheduler; yesterday's rate
       // moves a converted total by fractions of a percent.
@@ -142,17 +186,42 @@ export class CurrencyService {
       return body.rates;
     }
 
-    if (provider === 'ecb') {
-      // Frankfurter wraps the ECB reference rates: free, no key, daily.
-      const res = await fetch(`https://api.frankfurter.app/latest?from=${this.base}`, {
+    if (provider === 'erapi') {
+      // exchangerate-api's open endpoint: free, no key, and — unlike the ECB —
+      // it quotes all 160-odd ISO codes, including the pegged and managed
+      // currencies (LBP, SAR, AED, EGP, JOD, KWD, NGN) that our own supported
+      // list contains. This is the default for that reason.
+      const res = await fetch(`https://open.er-api.com/v6/latest/${this.base}`, {
         signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) throw new Error(`Provider returned ${res.status}`);
+      const body = (await res.json()) as { result?: string; rates: Record<string, number> };
+      if (body.result && body.result !== 'success') {
+        throw new Error(`Provider reported "${body.result}"`);
+      }
+      return body.rates;
+    }
+
+    if (provider === 'ecb') {
+      // Frankfurter wraps the ECB reference rates: free, no key, daily. Note
+      // the ECB publishes only ~30 majors — see the coverage check in
+      // refreshRates for what that leaves unquoted.
+      const res = await fetch(`https://api.frankfurter.app/latest?base=${this.base}`, {
+        signal: AbortSignal.timeout(15_000),
+        redirect: 'follow',
       });
       if (!res.ok) throw new Error(`Provider returned ${res.status}`);
       const body = (await res.json()) as { rates: Record<string, number> };
       return body.rates;
     }
 
-    // 'fixed' — offline development, so conversion is exercised without network.
-    return { EUR: 0.92, GBP: 0.79, AED: 3.67, SAR: 3.75, EGP: 48.5, JOD: 0.709, CAD: 1.36 };
+    // 'fixed' — offline development, so conversion is exercised without a
+    // network. Every supported currency appears; a gap here would send the
+    // dev-mode write path down the throwing branch of convert().
+    return {
+      EUR: 0.92, GBP: 0.79, AED: 3.6725, SAR: 3.75, EGP: 48.5, LBP: 89500,
+      JOD: 0.709, KWD: 0.307, CAD: 1.36, AUD: 1.51, CHF: 0.88, JPY: 147,
+      INR: 84.2, TRY: 34.5, NGN: 1580, ZAR: 18.1,
+    };
   }
 }

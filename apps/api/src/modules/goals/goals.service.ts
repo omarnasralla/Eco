@@ -7,6 +7,7 @@ import { RedisService } from '../../redis/redis.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { toNumber, toNumberOrNull } from '../../common/utils/money';
 import { fromIsoDate, requireIsoDate, todayIso, toIsoDate } from '../../common/utils/dates';
+import { CurrencyService } from '../currency/currency.service';
 
 function toDto(goal: SavingsGoal): SavingsGoalDto {
   const projection = projectGoal(
@@ -45,6 +46,7 @@ export class GoalsService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly notifications: NotificationsService,
+    private readonly currency: CurrencyService,
   ) {}
 
   async findAll(userId: string, includeArchived = false): Promise<SavingsGoalDto[]> {
@@ -231,11 +233,25 @@ export class GoalsService {
   }
 
   /** Total saved across active goals, in the user's base currency. */
-  async totalSaved(userId: string): Promise<number> {
-    const result = await this.prisma.savingsGoal.aggregate({
+  /**
+   * Total saved across active goals, in the user's base currency. Converted per
+   * goal rather than SQL-summed: goals may be held in different currencies, and
+   * adding those figures raw produces a number in no currency at all.
+   */
+  async totalSaved(userId: string, userCurrency: string): Promise<number> {
+    const goals = await this.prisma.savingsGoal.findMany({
       where: { userId, deletedAt: null, status: { in: ['ACTIVE', 'ACHIEVED'] } },
-      _sum: { currentAmountMinor: true },
+      select: { currentAmountMinor: true, currency: true },
     });
-    return toNumber(result._sum.currentAmountMinor ?? BigInt(0));
+
+    let total = 0;
+    for (const goal of goals) {
+      total += await this.currency.convertForDisplay(
+        toNumber(goal.currentAmountMinor),
+        goal.currency,
+        userCurrency,
+      );
+    }
+    return total;
   }
 }

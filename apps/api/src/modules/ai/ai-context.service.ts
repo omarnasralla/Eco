@@ -81,7 +81,7 @@ export class AiContextService {
       await Promise.all([
         this.transactions(userId, 12),
         this.income.monthlyTotal(userId, userCurrency),
-        this.goals.totalSaved(userId),
+        this.goals.totalSaved(userId, userCurrency),
         this.prisma.debt.findMany({ where: { userId, deletedAt: null, isClosed: false } }),
         this.prisma.category.findMany({
           where: { userId, deletedAt: null },

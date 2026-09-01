@@ -6,6 +6,7 @@ import type {
   CategoryDto,
   DashboardSummaryDto,
   DebtDto,
+  ExchangeRateDto,
   ExpenseDto,
   ForecastDto,
   IncomeSourceDto,
@@ -46,6 +47,7 @@ export const queryKeys = {
   healthScore: ['ai', 'health-score'] as const,
   conversations: ['ai', 'conversations'] as const,
   conversation: (id: string) => ['ai', 'conversation', id] as const,
+  exchangeRates: (date?: string) => ['currency', 'rates', date ?? 'latest'] as const,
   notifications: ['notifications'] as const,
   unreadCount: ['notifications', 'unread-count'] as const,
 } as const;
@@ -88,7 +90,10 @@ export const fetchers = {
 
   goals: () => api.get<SavingsGoalDto[]>('/goals'),
 
-  budget: (month: string) => api.get<BudgetDto | null>(`/budgets/${month}`),
+  // React Query rejects `undefined` as query data, so an absent budget is
+  // normalised to an explicit null the UI can render an empty state from.
+  budget: (month: string) =>
+    api.get<BudgetDto | null>(`/budgets/${month}`).then((b) => b ?? null),
 
   forecast: (horizonMonths = 6) =>
     api.get<ForecastDto>('/ai/forecast', { query: { horizonMonths } }),
@@ -102,6 +107,9 @@ export const fetchers = {
   notifications: () => api.get<Paginated<NotificationDto>>('/notifications'),
 
   unreadCount: () => api.get<{ count: number }>('/notifications/unread-count'),
+
+  exchangeRates: (date?: string) =>
+    api.get<ExchangeRateDto>('/currency/rates', { query: { date } }),
 };
 
 /* ── Response shapes the API composes rather than importing wholesale ─── */

@@ -6,7 +6,7 @@ import { Suspense, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2, Plus, Search } from 'lucide-react';
-import { expenseSchema, formatMoney, toMinorUnits, type ExpenseInput } from '@eco/shared';
+import { expenseSchema, formatMoney, type ExpenseInput } from '@eco/shared';
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
 import { useMoneyFormat } from '@/lib/auth-provider';
@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { MoneyInput } from '@/components/ui/money-input';
 import {
   Select,
   SelectContent,
@@ -137,12 +138,18 @@ function ExpensesContent() {
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
-                    <p className="tabular text-sm font-medium">{money(expense.amountMinor)}</p>
+                    {/* The headline figure is the *converted* amount, which is
+                        what the ledger totals — formatting the entry amount with
+                        the base currency's symbol would relabel 100 EUR as
+                        $100.00 while the real converted value sat elsewhere. */}
+                    <p className="tabular text-sm font-medium">
+                      {money(expense.baseAmountMinor)}
+                    </p>
                     {expense.currency !== currency ? (
-                      // Original currency shown when it differs, so a
-                      // converted figure is never mistaken for what was paid.
+                      // What was actually paid, in the currency it was paid in.
+                      // This figure never moves: it is the receipt, not a view.
                       <p className="tabular text-xs text-muted-foreground">
-                        {formatMoney(expense.amountMinor, expense.currency, { locale })}
+                        {formatMoney(expense.amountMinor, expense.currency, { locale })} paid
                       </p>
                     ) : null}
                   </div>
@@ -158,6 +165,7 @@ function ExpensesContent() {
         onOpenChange={setDialogOpen}
         categories={categories.data ?? []}
         currency={currency}
+        locale={locale}
         onCreated={() => {
           // An expense changes the dashboard, the budget and the AI's picture,
           // so invalidate the lot rather than just this list.
@@ -173,15 +181,21 @@ function AddExpenseDialog({
   onOpenChange,
   categories,
   currency,
+  locale,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   categories: Array<{ id: string; name: string }>;
+  /** The account's base currency; entries are converted into it. */
   currency: string;
+  locale: string;
   onCreated: () => void;
 }) {
   const [amount, setAmount] = useState('');
+  // The currency the user types in, which need not be their base currency —
+  // the API converts at the transaction date's rate and freezes the result.
+  const [entryCurrency, setEntryCurrency] = useState(currency);
   const [formError, setFormError] = useState<string | null>(null);
 
   const {
@@ -208,6 +222,7 @@ function AddExpenseDialog({
     onSuccess: () => {
       reset();
       setAmount('');
+      setEntryCurrency(currency);
       onOpenChange(false);
       onCreated();
     },
@@ -231,23 +246,21 @@ function AddExpenseDialog({
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           <div className="space-y-2">
             <Label htmlFor="amount">Amount</Label>
-            <Input
+            <MoneyInput
               id="amount"
-              // A decimal keypad on mobile, and the value is converted to minor
-              // units before it leaves the form — floats never touch a balance.
-              inputMode="decimal"
-              placeholder="0.00"
-              value={amount}
-              onChange={(event) => {
-                const raw = event.target.value;
-                setAmount(raw);
-                const parsed = Number(raw);
-                setValue(
-                  'amountMinor',
-                  Number.isFinite(parsed) && parsed > 0 ? toMinorUnits(parsed, currency) : 0,
-                  { shouldValidate: true },
-                );
+              amount={amount}
+              onAmountChange={setAmount}
+              entryCurrency={entryCurrency}
+              onCurrencyChange={(next) => {
+                setEntryCurrency(next);
+                setValue('currency', next, { shouldValidate: true });
               }}
+              onMinorChange={(minor) =>
+                setValue('amountMinor', minor, { shouldValidate: true })
+              }
+              baseCurrency={currency}
+              locale={locale}
+              date={watch('date')}
             />
             {errors.amountMinor ? (
               <p className="text-sm text-destructive">Enter an amount above zero.</p>

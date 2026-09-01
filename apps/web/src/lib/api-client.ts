@@ -174,6 +174,20 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   }
 
   const contentType = response.headers.get('content-type') ?? '';
+
+  // An empty body — no Content-Type, or an explicit zero length — is how the
+  // API reports that an optional resource simply does not exist yet, such as a
+  // month the user has never set a budget for. There is nothing to parse.
+  //
+  // This has to be caught *before* the blob fallback below. An empty Blob is a
+  // truthy object, so it slips past every `if (!data)` guard in the UI and then
+  // fails much later and much less legibly, as a "cannot read properties of
+  // undefined" thrown from inside whichever component first reads a field.
+  if (!contentType || response.headers.get('content-length') === '0') {
+    return undefined as T;
+  }
+
+  // Report exports (PDF/Excel/CSV) come back as files, not JSON.
   if (!contentType.includes('application/json')) {
     return (await response.blob()) as T;
   }

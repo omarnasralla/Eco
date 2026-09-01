@@ -75,7 +75,13 @@ export default function IncomePage() {
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
-                    <p className="tabular text-sm font-semibold">{money(source.amountMinor)}</p>
+                    {/* A source is a schedule, not a settled transaction, so
+                        there is no frozen converted figure to show — render it
+                        in the currency it is actually paid in rather than
+                        relabelling the same number with the base symbol. */}
+                    <p className="tabular text-sm font-semibold">
+                      {formatMoney(source.amountMinor, source.currency, { locale })}
+                    </p>
                     {source.frequency !== 'MONTHLY' && source.frequency !== 'ONE_TIME' ? (
                       <p className="tabular text-xs text-muted-foreground">
                         {money(source.monthlyEquivalentMinor)}/mo
