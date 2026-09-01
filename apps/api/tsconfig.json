@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "baseUrl": "./",
+    "incremental": true,
+    // Keep the incremental cache inside the output directory. With it outside,
+    // deleting dist leaves tsc believing every file is already emitted, and the
+    // next build silently produces a partial dist.
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    "strictPropertyInitialization": false,
+    "noUncheckedIndexedAccess": false,
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "test"]
+}

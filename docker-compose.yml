@@ -1,0 +1,147 @@
+# Local development stack.  `docker compose up -d` gives you the whole
+# ecosystem: database, cache, API, web, AI service, a local LLM and a mail
+# catcher.  Production uses the Kubernetes manifests in infra/k8s instead.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: eco-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-eco}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-eco_dev_password_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-eco}
+      # Deterministic collation keeps index behaviour identical across machines.
+      POSTGRES_INITDB_ARGS: "--locale-provider=icu --icu-locale=en-US"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-eco} -d ${POSTGRES_DB:-eco}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [eco]
+
+  redis:
+    image: redis:7-alpine
+    container_name: eco-redis
+    restart: unless-stopped
+    # Cache-first eviction: sessions and rate-limit counters live here too, so
+    # we cap memory and evict least-recently-used keys rather than OOM.
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [eco]
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: development
+    container_name: eco-api
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-eco}:${POSTGRES_PASSWORD:-eco_dev_password_change_me}@postgres:5432/${POSTGRES_DB:-eco}?schema=public
+      REDIS_URL: redis://redis:6379
+      AI_SERVICE_URL: http://ai:8000
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+    ports:
+      - "${API_PORT:-4000}:4000"
+    volumes:
+      - ./apps/api/src:/app/apps/api/src:ro
+      - ./packages:/app/packages:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [eco]
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: development
+    container_name: eco-web
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      # Browser-side calls resolve against the host, not the compose network.
+      NEXT_PUBLIC_API_URL: http://localhost:${API_PORT:-4000}/api/v1
+      # Server-side rendering talks to the API over the internal network.
+      API_INTERNAL_URL: http://api:4000/api/v1
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/web/src:/app/apps/web/src:ro
+      - ./packages:/app/packages:ro
+    depends_on: [api]
+    networks: [eco]
+
+  ai:
+    build:
+      context: ./services/ai
+      dockerfile: Dockerfile
+    container_name: eco-ai
+    restart: unless-stopped
+    environment:
+      ECO_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-eco}:${POSTGRES_PASSWORD:-eco_dev_password_change_me}@postgres:5432/${POSTGRES_DB:-eco}
+      REDIS_URL: redis://redis:6379
+      OLLAMA_BASE_URL: http://ollama:11434
+      ECO_LLM_MODEL: ${ECO_LLM_MODEL:-llama3.2:3b}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-replace_me_shared_service_token}
+    ports:
+      - "${AI_SERVICE_PORT:-8000}:8000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [eco]
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: eco-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    # Uncomment on a GPU host to cut inference latency by roughly 10x.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }]
+    networks: [eco]
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: eco-mailhog
+    restart: unless-stopped
+    # Catches every outbound email in development. UI at http://localhost:8025.
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks: [eco]
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_models:
+
+networks:
+  eco:
+    driver: bridge

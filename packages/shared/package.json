@@ -1,0 +1,21 @@
+{
+  "name": "@eco/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Platform-agnostic types, enums and validation schemas shared by web, API and React Native.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

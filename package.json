@@ -1,0 +1,33 @@
+{
+  "name": "eco",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Eco — an intelligent personal finance ecosystem",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "build:packages": "npm run build -w @eco/shared && npm run build -w @eco/core",
+    "build": "npm run build:packages && npm run build -w @eco/api && npm run build -w @eco/web",
+    "dev": "npm run build:packages && concurrently -n api,web -c cyan,magenta \"npm run dev -w @eco/api\" \"npm run dev -w @eco/web\"",
+    "dev:api": "npm run dev -w @eco/api",
+    "dev:web": "npm run dev -w @eco/web",
+    "test": "npm run test -w @eco/core && npm run test -w @eco/api",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "prisma:generate": "npm run prisma:generate -w @eco/api",
+    "prisma:migrate": "npm run prisma:migrate -w @eco/api",
+    "prisma:seed": "npm run prisma:seed -w @eco/api",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  }
+}
