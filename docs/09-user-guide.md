@@ -1,0 +1,213 @@
+# User guide — first run, mobile navigation, and income
+
+This is the practical companion to the architecture docs: how to get a
+brand-new account set up, where each screen lives on a phone and on a desktop,
+and how income works. It is written against the code in `apps/web` and
+`apps/api`, not against a roadmap — where the app cannot yet do something, this
+document says so and gives the workaround.
+
+## 1. Where everything lives
+
+Navigation is defined once, in `apps/web/src/components/layout/nav-items.ts`,
+and rendered two ways:
+
+- **Desktop (`lg` and wider, ≥1024px)** — the left sidebar
+  (`components/layout/sidebar.tsx`) lists **all nine** destinations plus your
+  profile and Sign out.
+- **Phone and tablet (below 1024px)** — the bottom tab bar
+  (`components/layout/mobile-nav.tsx`), where the sidebar is hidden
+  (`hidden … lg:flex`). Five slots: four destinations flagged `primary: true`,
+  and **More**, which opens a sheet holding the other five pages plus your
+  account and Sign out.
+
+| Page | Path | On a phone |
+|---|---|---|
+| Dashboard | `/dashboard` | Tab bar |
+| Expenses | `/expenses` | Tab bar |
+| Eco AI | `/assistant` | Tab bar |
+| Budgets | `/budgets` | Tab bar |
+| Debts | `/debts` | More |
+| Income | `/income` | More |
+| Goals | `/goals` | More |
+| Reports | `/reports` | More |
+| Settings | `/settings` | More |
+
+### Reaching Settings, Income, Goals and Reports on a phone
+
+**Tap More**, the last tab in the bottom bar. It opens a sheet listing Debts,
+Income, Goals, Reports and Settings, with your account and Sign out beneath
+them. Tapping any row navigates and closes the sheet.
+
+The More tab is highlighted whenever you are on one of the pages it holds, so
+the tab bar never claims you are nowhere.
+
+Two details worth knowing:
+
+- **Debts moved into More.** Five slots is the platform maximum before a tap
+  target becomes a guess, and the fifth is now spent on More. Debts is a
+  planning screen visited occasionally rather than a daily-entry one, so it
+  yielded its slot. It is one extra tap away, and unchanged on desktop.
+- **Direct URLs still work** and make good home-screen shortcuts, since the app
+  ships a web manifest (`apps/web/public/manifest.webmanifest`). `/settings`
+  and `/expenses?new=1` are the two worth pinning.
+
+At 1024px and wider — a landscape tablet, or a phone browser set to request the
+desktop site — the tab bar gives way to the sidebar, which lists all nine
+destinations at once.
+
+## 2. A fresh account, start to finish
+
+1. **Register** at `/register`, then verify the email that arrives. In local
+   development, mail is caught by MailHog at `http://localhost:8025` — nothing
+   leaves the machine. An unverified account still works; Settings shows an
+   `unverified` badge.
+2. **Set your base currency** at `/settings` → *Profile* → *Base currency*.
+   Do this **before** entering data. Every total and chart is rendered in this
+   currency; past transactions keep the exchange rate from the day they
+   happened, so history stays consistent, but starting in the right currency
+   saves you reading converted figures.
+3. **Choose a theme** at `/settings` → *Appearance* (light / dark / system).
+4. **Review security** at `/settings` → *Security*: it shows whether two-factor
+   authentication is on, lists your active sessions, and offers *Sign out
+   everywhere*. Note that the page only **reports** the 2FA state — there is no
+   enable button yet; turning it on means calling `POST /auth/2fa/setup` and
+   `POST /auth/2fa/enable`.
+5. **Add your income** at `/income` → *Add* — see section 3. This matters
+   first because the
+   dashboard's savings rate, the budget headroom, the debt payoff plans and
+   the AI health score all divide by income. With no income recorded, a fresh
+   account reports a 0 monthly run rate and every derived figure reads as if
+   you earn nothing.
+6. **Add expenses** at `/expenses` → *Add*. The dialog also opens directly via
+   the deep link `/expenses?new=1`, which is handy as a home-screen shortcut;
+   `/income?new=1` does the same for income.
+7. **Set a budget** at `/budgets`, and **goals** at `/goals`, once there is
+   income and a few weeks of spending for them to be measured against.
+
+Your twelve default expense categories (Housing, Transportation, Food, …) are
+seeded automatically at registration — you do not need to create them.
+
+## 3. Adding income
+
+### In the app
+
+Open `/income` — via **More → Income** on a phone, or the sidebar on desktop —
+and tap **Add**. On a fresh account the empty state carries the same button, so
+there is no dead end to back out of.
+
+Six fields, and the last three come pre-filled — a name, an amount and a
+frequency is a complete entry:
+
+| Field | What to put |
+|---|---|
+| **Name** | Whatever you will recognise: "Acme Ltd — Salary", "Weekend shifts". |
+| **Amount** | What actually lands in your account — take-home pay, not gross. Nothing is deducted from this figure. Type it in normal units (`3200`, `3200.50`); the form converts to minor units before sending. |
+| **How often** | Monthly, weekly, every two weeks, quarterly, yearly, or a one-off. |
+| **Type** | Salary, freelancing, business, investments, rental, side hustle, other. Defaults to Salary. |
+| **Started on** | When the stream began, even if that was years ago. Defaults to today. |
+| **Notes** | Optional. |
+
+Saving refreshes the run rate, the dashboard, your budget headroom and the
+health score together — income moves all of them, so none is left stale.
+
+To record a second stream, tap **Add** again. Editing and deleting an existing
+source still have no UI; use `PATCH /income/:id` and `DELETE /income/:id` for
+now.
+
+### Adding income through the API
+
+You do not need this for normal use — it is here for scripting, bulk imports,
+and the operations the UI does not cover yet (editing, deleting, receipts).
+
+In development the interactive Swagger UI at
+`http://localhost:4000/api/v1/docs` is the easiest route: authorise with your
+access token, open **income → POST /income**, and *Try it out*. Swagger is
+disabled in production (`main.ts` mounts it only when `isProduction` is false),
+so on a deployed instance use curl or any HTTP client.
+
+By hand:
+
+```bash
+# 1. Sign in and keep the access token
+TOKEN=$(curl -s -X POST http://localhost:4000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"your-password"}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["accessToken"])')
+
+# 2. Create an income source
+curl -X POST http://localhost:4000/api/v1/income \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "Acme Ltd — Salary",
+    "type": "SALARY",
+    "amountMinor": 320000,
+    "currency": "GBP",
+    "frequency": "MONTHLY",
+    "startDate": "2026-01-25",
+    "isActive": true,
+    "notes": "Net pay after tax and pension."
+  }'
+```
+
+If two-factor authentication is on, `POST /auth/login` returns a challenge
+rather than tokens — complete it at `POST /auth/login/2fa` and use the
+`accessToken` from that response instead.
+
+Reload `/income` and the source, and your monthly run rate, appear.
+
+### Field reference
+
+Validated by `incomeSourceSchema` in `packages/shared/src/schemas.ts`. The form
+fills in `currency`, `isActive` and the minor-unit conversion for you; over the
+API you send them yourself.
+
+| Field | Required | Notes |
+|---|---|---|
+| `name` | yes | 1–120 characters. |
+| `type` | yes | `SALARY`, `FREELANCE`, `BUSINESS`, `INVESTMENT`, `RENTAL`, `SIDE_HUSTLE`, `OTHER`. |
+| `amountMinor` | yes | **Minor units** — pence, cents. £3,200.00 is `320000`. Not `3200`. |
+| `currency` | yes | ISO-4217 code, e.g. `GBP`. May differ from your base currency; it is converted for totals. |
+| `frequency` | yes | `ONE_TIME`, `WEEKLY`, `BIWEEKLY`, `MONTHLY`, `QUARTERLY`, `YEARLY`. |
+| `startDate` | yes | `YYYY-MM-DD` — when the stream began, which may be years ago. |
+| `endDate` | no | Must fall on or after `startDate`. Use it for a contract that ends. |
+| `isActive` | no | Defaults `true`. Set `false` to keep a finished job in your history without counting it. |
+| `notes` | no | Up to 2000 characters. |
+
+**The amount to enter is your take-home pay**, not gross, unless you also plan
+to record tax as an expense. The number is used as-is; nothing is deducted.
+
+### How the monthly run rate is calculated
+
+Weekly and fortnightly pay is annualised over 52 and 26 payments and then
+divided by twelve (`OCCURRENCES_PER_YEAR` in `packages/shared/src/enums.ts`).
+A three-paycheque month is therefore not mistaken for a raise, and the figure
+you see on `/income` and on the dashboard is the same figure. `ONE_TIME`
+income counts zero times per year and so adds nothing to the run rate — that is
+deliberate; a one-off bonus is not a monthly income stream.
+
+### Recording what actually arrived
+
+A source is the *expectation*. `POST /income/:id/receipts` records an actual
+payment (`amountMinor`, `date`, optional `notes`), which is what the AI layer's
+income-consistency analysis reads to tell steady pay from variable pay. There is
+no UI for this yet.
+
+### Local development shortcut
+
+`npm run prisma:seed` builds a demo account — `demo@eco.app` /
+`demo-password-2026` — with a monthly salary, freelance income, three years of
+expenses, debts and goals already in place. Use it to see populated screens
+without entering anything; it is a development fixture, not your account.
+
+## 4. Summary of current gaps
+
+| Gap | Impact | Workaround |
+|---|---|---|
+| No create UI for Goals, Debts, Budgets | They cannot be set up in the app | Their `POST` endpoints, documented in `docs/03-api-design.md` |
+| No edit or delete UI for income | A typo means fixing it over the API | `PATCH /income/:id`, `DELETE /income/:id` |
+| No UI for income receipts | Income-consistency analysis has no actuals to read | `POST /income/:id/receipts` |
+| Settings reports 2FA state but cannot enable it | Two-factor cannot be turned on from the UI | `POST /auth/2fa/setup` then `POST /auth/2fa/enable` |
+
+Income and mobile navigation were on this list; both are fixed. Expenses and
+income now have create forms, and every page is reachable by tap on a phone.

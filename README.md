@@ -116,7 +116,8 @@ cd services/ai && .venv/bin/python -m pytest tests/ -q
 | [Deployment](docs/05-deployment.md) | Images, Kubernetes, secrets, CI/CD |
 | [Roadmap](docs/06-roadmap.md) | MVP scope, phases, scaling to 1M+ users |
 | [Security](docs/07-security.md) | Threat model, OWASP mapping, **known gaps** |
-| [Frontend](docs/08-frontend.md) | Screens, chart method, accessibility |
+| [Frontend](08-frontend.md) | Screens, chart method, accessibility |
+| [User guide](docs/09-user-guide.md) | First run on a fresh account, phone navigation, recording income |
 
 ## A few decisions worth knowing about
 
