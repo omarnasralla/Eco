@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 
 from app.config import get_settings
 from app.main import app
+from app.routers import chat as chat_router
+from app.services.llm import LLMUnavailableError
 
 client = TestClient(app)
 TOKEN = get_settings().ai_service_token
@@ -98,9 +100,15 @@ class TestForecastEndpoint:
 
 
 class TestChatEndpoint:
-    def test_reports_503_when_the_model_is_unreachable(self):
-        # No Ollama in the test environment. The API relies on 503 (not 500) to
-        # decide this is a degradation to surface, not a bug to alert on.
+    def test_reports_503_when_the_model_is_unreachable(self, monkeypatch):
+        # Unavailability is simulated rather than assumed. The original version
+        # of this test relied on Ollama simply not being installed, which meant
+        # it silently stopped testing anything the moment a model was pulled.
+        async def unavailable(_request):
+            raise LLMUnavailableError("simulated outage")
+
+        monkeypatch.setattr(chat_router.llm, "chat", unavailable)
+
         response = client.post(
             "/chat",
             json={
@@ -111,7 +119,38 @@ class TestChatEndpoint:
             },
             headers=AUTH,
         )
+        # 503, not 500: the API treats this as a degradation to surface to the
+        # user, not a bug to page someone about.
         assert response.status_code == 503
+        assert "unavailable" in response.json()["detail"].lower()
+
+    def test_returns_the_model_answer_when_available(self, monkeypatch):
+        from app.models.schemas import ChatResponse
+
+        async def stubbed(request):
+            return ChatResponse(
+                content="You spent £120 on food last month.",
+                model="stub",
+                tokens_used=42,
+                suggestions=["What else?"],
+            )
+
+        monkeypatch.setattr(chat_router.llm, "chat", stubbed)
+
+        response = client.post(
+            "/chat",
+            json={
+                "user_id": "00000000-0000-0000-0000-000000000000",
+                "message": "How much did I spend on food?",
+                "history": [],
+                "context": {"currency": "GBP"},
+            },
+            headers=AUTH,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["content"] == "You spent £120 on food last month."
+        assert body["tokens_used"] == 42
 
     def test_rejects_an_empty_message(self):
         response = client.post(

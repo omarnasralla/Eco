@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eco-ai
+  namespace: eco
+  labels: { app: eco-ai }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: eco-ai }
+  template:
+    metadata:
+      labels: { app: eco-ai }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+
+      containers:
+        - name: ai
+          image: ghcr.io/eco/ai:latest
+          ports:
+            - { name: http, containerPort: 8000 }
+          envFrom:
+            - configMapRef: { name: eco-config }
+            - secretRef: { name: eco-secrets }
+          env:
+            - { name: ECO_ENV, value: production }
+
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+          # statsmodels fits are CPU-bound and allocate freely; this envelope
+          # covers a 24-month Holt-Winters run with headroom.
+          resources:
+            requests: { cpu: 300m, memory: 512Mi }
+            limits: { cpu: "2", memory: 1Gi }
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+
+      volumes:
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eco-ai
+  namespace: eco
+spec:
+  selector: { app: eco-ai }
+  ports:
+    - { name: http, port: 8000, targetPort: http }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: eco-ai
+  namespace: eco
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: eco-ai }
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }

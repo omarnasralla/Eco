@@ -1,0 +1,184 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  # ── Fast feedback: no infrastructure, so this finishes in under a minute ───
+  quality:
+    name: Lint, typecheck & unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build:packages
+
+      - name: Typecheck every workspace
+        run: npm run typecheck --workspaces --if-present
+
+      # 128 tests over the financial engine. No database, no mocks, ~1 second.
+      - name: Domain unit tests
+        run: npm run test --workspace @eco/core
+
+      - name: Verify the chart palette is still colour-vision safe
+        run: |
+          # The seeded category palette is a correctness property, not a style
+          # choice — a regression here makes two categories indistinguishable.
+          node scripts/verify-palette.mjs
+
+  python:
+    name: AI service tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ai
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/ai/requirements-dev.txt
+
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest tests/ -q
+
+  # ── Integration: real Postgres, real Redis, real migrations ───────────────
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: eco
+          POSTGRES_PASSWORD: eco_test
+          POSTGRES_DB: eco_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://eco:eco_test@localhost:5432/eco_test?schema=public
+      REDIS_URL: redis://localhost:6379
+      NODE_ENV: test
+      JWT_ACCESS_SECRET: ci-access-secret-at-least-32-characters-long
+      JWT_REFRESH_SECRET: ci-refresh-secret-at-least-32-characters-different
+      ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      AI_SERVICE_TOKEN: ci-service-token
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build:packages
+
+      - name: Apply migrations
+        working-directory: apps/api
+        run: npx prisma migrate deploy
+
+      - name: Apply row-level security
+        run: psql "$DATABASE_URL" -f infra/postgres/rls.sql
+
+      - name: Verify every tenant table has RLS enabled
+        run: |
+          # A table added without a policy is a cross-tenant leak waiting to
+          # happen, so this is a build failure rather than a review checklist.
+          missing=$(psql "$DATABASE_URL" -tAc "
+            SELECT c.relname FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relkind = 'r'
+              AND c.relname NOT IN ('_prisma_migrations', 'exchange_rates')
+              AND NOT c.relrowsecurity;")
+          if [ -n "$missing" ]; then
+            echo "Tables missing RLS:"; echo "$missing"; exit 1
+          fi
+          echo "All tenant tables have RLS enabled."
+
+      - run: npm run build --workspace @eco/api
+      - run: npm run prisma:seed --workspace @eco/api
+
+      - name: Boot the API and exercise it
+        run: |
+          node apps/api/dist/main.js & echo $! > /tmp/api.pid
+          for i in $(seq 1 45); do
+            curl -sf http://localhost:4000/api/v1/health/live && break
+            sleep 1
+          done
+          npm run test:e2e --workspace @eco/api
+          kill "$(cat /tmp/api.pid)"
+
+  build:
+    name: Build & scan images
+    runs-on: ubuntu-latest
+    needs: [quality, python, integration]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - { name: api, dockerfile: apps/api/Dockerfile, context: . }
+          - { name: web, dockerfile: apps/web/Dockerfile, context: . }
+          - { name: ai,  dockerfile: services/ai/Dockerfile, context: services/ai }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          target: production
+          load: true
+          tags: eco-${{ matrix.name }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: Scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: eco-${{ matrix.name }}:${{ github.sha }}
+          format: table
+          # A finance product does not ship known-critical CVEs.
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+      - name: Push
+        if: github.event_name == 'push'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker tag eco-${{ matrix.name }}:${{ github.sha }} ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ github.sha }}
+          docker push ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ github.sha }}

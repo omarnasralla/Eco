@@ -283,9 +283,13 @@ describe('financialHealthScore', () => {
     expect(result.components).toHaveLength(4);
   });
 
-  it('penalises a heavy debt load', () => {
-    const result = financialHealthScore(
+  it('scores debt on payment burden, not balance', () => {
+    // A large mortgage with an affordable payment is not a crisis. Scoring on
+    // balance-to-income would put this at zero; on payments it is 24% of
+    // income, which is merely "keep an eye on it".
+    const affordableMortgage = financialHealthScore(
       snapshot({
+        monthlyIncomeMinor: 500_000,
         debts: [
           {
             id: 'mortgage',
@@ -297,8 +301,34 @@ describe('financialHealthScore', () => {
         ],
       }),
     );
+    const score = affordableMortgage.components.find((c) => c.name === 'Debt load')!;
+    expect(score.score).toBeGreaterThan(60);
+    expect(score.detail).toContain('24%');
+  });
+
+  it('penalises payments that eat the income', () => {
+    const result = financialHealthScore(
+      snapshot({
+        monthlyIncomeMinor: 500_000,
+        debts: [
+          {
+            id: 'cards',
+            name: 'Cards',
+            currentBalanceMinor: 2_000_000,
+            interestRateApr: 24,
+            minimumPaymentMinor: 250_000, // 50% of income
+          },
+        ],
+      }),
+    );
     expect(result.components.find((c) => c.name === 'Debt load')!.score).toBe(0);
-    expect(result.score).toBeLessThan(80);
+  });
+
+  it('gives full marks when there is no debt at all', () => {
+    const result = financialHealthScore(snapshot({ debts: [] }));
+    const debt = result.components.find((c) => c.name === 'Debt load')!;
+    expect(debt.score).toBe(100);
+    expect(debt.detail).toBe('No debt payments');
   });
 
   it('penalises projected shortfalls', () => {

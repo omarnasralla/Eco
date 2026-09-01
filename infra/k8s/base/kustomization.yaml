@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: eco
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - api-deployment.yaml
+  - web-deployment.yaml
+  - ai-deployment.yaml
+  - ingress.yaml
+  - network-policy.yaml
+  # secrets.example.yaml is a template and is deliberately NOT applied.
+  # Real secrets are synchronised by External Secrets Operator.
+
+commonLabels:
+  app.kubernetes.io/part-of: eco

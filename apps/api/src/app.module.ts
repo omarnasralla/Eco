@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, Reflector } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { RATE_LIMITS } from '@eco/shared';
 import { configuration } from './config/configuration';
 import { validateEnv } from './config/env.validation';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -54,8 +55,8 @@ import { UsersModule } from './modules/users/users.module';
           },
           // Named buckets referenced by @Throttle on specific routes.
           { name: 'auth', ttl: 60_000, limit: config.getOrThrow<number>('throttle.authLimit') },
-          { name: 'ai', ttl: 60_000, limit: 20 },
-          { name: 'export', ttl: 3_600_000, limit: 20 },
+          { name: 'ai', ttl: 60_000, limit: RATE_LIMITS.ai.max },
+          { name: 'export', ttl: 3_600_000, limit: RATE_LIMITS.export.max },
         ],
       }),
     }),

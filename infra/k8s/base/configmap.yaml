@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eco-config
+  namespace: eco
+data:
+  NODE_ENV: "production"
+  TZ: "UTC"
+  API_PORT: "4000"
+  API_GLOBAL_PREFIX: "api/v1"
+  LOG_LEVEL: "info"
+
+  JWT_ACCESS_TTL: "900"
+  JWT_REFRESH_TTL: "2592000"
+  JWT_ISSUER: "eco.app"
+  JWT_AUDIENCE: "eco.clients"
+
+  REDIS_URL: "redis://eco-redis:6379"
+  AI_SERVICE_URL: "http://eco-ai:8000"
+  OLLAMA_BASE_URL: "http://eco-ollama:11434"
+  ECO_LLM_MODEL: "llama3.2:3b"
+
+  FX_PROVIDER: "ecb"
+  BASE_CURRENCY: "USD"
+
+  THROTTLE_TTL: "60"
+  THROTTLE_LIMIT: "120"
+  AUTH_THROTTLE_LIMIT: "10"

@@ -1,0 +1,14 @@
+# The build context is services/ai, so the repo-root .dockerignore does not
+# apply here. Without this the local virtualenv (~450MB) is uploaded to the
+# daemon on every build.
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+tests
+.env
+*.log

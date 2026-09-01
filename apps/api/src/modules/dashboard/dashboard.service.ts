@@ -64,6 +64,26 @@ export class DashboardService {
 
       const netCashFlowMinor = monthlyIncome - expensesThis;
 
+      // The savings rate is a trailing average over complete months, never the
+      // month in progress.
+      //
+      // Two reasons. The month in progress is partial — on the 1st it holds a
+      // single day of spending, and dividing full-month income by it reports a
+      // 97% savings rate that is simply false. And a *single* complete month is
+      // still too noisy: one holiday turns a healthy saver into a -47% headline.
+      // Averaging three months matches the basis the financial health score
+      // uses, so the two figures on this page agree instead of contradicting
+      // each other.
+      const basisMonths = [1, 2, 3].map((offset) => addMonths(targetMonth, -offset));
+      const basisExpenses = await Promise.all(
+        basisMonths.map((m) => this.totalExpenses(userId, m)),
+      );
+      const averageExpenses = Math.round(
+        basisExpenses.reduce((sum, value) => sum + value, 0) / basisExpenses.length,
+      );
+      const savingsRateBasisMonth = `${basisMonths.at(-1)} to ${basisMonths[0]}`;
+      const savingsRatePctValue = savingsRatePct(monthlyIncome, averageExpenses);
+
       // Net worth here is liquid savings less outstanding debt. It deliberately
       // excludes illiquid assets (property, pensions) — Eco does not track them
       // yet, and a partial figure presented as "net worth" would mislead.
@@ -77,7 +97,8 @@ export class DashboardService {
         totalIncomeMinor: monthlyIncome,
         totalExpensesMinor: expensesThis,
         netCashFlowMinor,
-        savingsRatePct: savingsRatePct(monthlyIncome, expensesThis),
+        savingsRatePct: savingsRatePctValue,
+        savingsRateBasisMonth,
         totalDebtMinor: totalDebt,
         totalSavingsMinor: totalSavings,
         netWorthMinor,

@@ -1,0 +1,85 @@
+# Default-deny, then allow only the edges the system actually uses.
+#
+# Without this, a compromised pod anywhere in the cluster can reach Postgres
+# directly. With it, the database accepts connections from the API and the AI
+# service and nothing else — the blast radius of an application compromise
+# stops at that pod.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: eco
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-ingress
+  namespace: eco
+spec:
+  podSelector:
+    matchLabels: { app: eco-web }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+      ports:
+        - { protocol: TCP, port: 3000 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress
+  namespace: eco
+spec:
+  podSelector:
+    matchLabels: { app: eco-api }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+        - podSelector:
+            matchLabels: { app: eco-web }
+      ports:
+        - { protocol: TCP, port: 4000 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ai-ingress
+  namespace: eco
+spec:
+  podSelector:
+    matchLabels: { app: eco-ai }
+  policyTypes: [Ingress]
+  ingress:
+    # The AI service is internal-only: the API is its sole client. It is never
+    # exposed through the ingress controller.
+    - from:
+        - podSelector:
+            matchLabels: { app: eco-api }
+      ports:
+        - { protocol: TCP, port: 8000 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-ingress
+  namespace: eco
+spec:
+  podSelector:
+    matchLabels: { app: eco-postgres }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: eco-api }
+        - podSelector:
+            matchLabels: { app: eco-ai }
+      ports:
+        - { protocol: TCP, port: 5432 }
