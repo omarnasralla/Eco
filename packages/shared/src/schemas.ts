@@ -14,6 +14,7 @@ import {
   NOTIFICATION_CHANNELS,
   PAYOFF_STRATEGIES,
   REPORT_PERIODS,
+  USER_ROLES,
 } from './enums';
 
 /** Amounts arrive as integer minor units — see money.ts for the rationale. */
@@ -355,3 +356,32 @@ export type NotificationPreferences = z.infer<typeof notificationPreferencesSche
 export type ReportRequest = z.infer<typeof reportRequestSchema>;
 export type AiChatInput = z.infer<typeof aiChatSchema>;
 export type ForecastRequest = z.infer<typeof forecastRequestSchema>;
+
+/* ── Admin ────────────────────────────────────────────────── */
+
+/**
+ * What an administrator may change about another account.
+ *
+ * Intentionally narrow. An admin console that can edit a user's own financial
+ * records invites exactly the mistake it exists to prevent, so this covers
+ * identity and access only — the money stays the user's.
+ */
+export const adminUpdateUserSchema = z
+  .object({
+    role: z.enum(USER_ROLES),
+    emailVerified: z.boolean(),
+    name: z.string().trim().min(1).max(120),
+  })
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, { message: 'No changes supplied' });
+
+export const adminUserQuerySchema = z.object({
+  search: z.string().trim().max(200).optional(),
+  role: z.enum(USER_ROLES).optional(),
+  status: z.enum(['active', 'locked', 'deleted', 'unverified']).optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+export type AdminUpdateUserInput = z.infer<typeof adminUpdateUserSchema>;
+export type AdminUserQuery = z.infer<typeof adminUserQuerySchema>;

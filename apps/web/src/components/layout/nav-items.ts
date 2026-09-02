@@ -1,5 +1,6 @@
 import {
   Bot,
+  ShieldCheck,
   CreditCard,
   LayoutDashboard,
   PiggyBank,
@@ -21,6 +22,12 @@ export interface NavItem {
    * so four destinations are primary and the rest open from the More sheet.
    */
   primary?: boolean;
+  /**
+   * Hidden from the navigation unless the signed-in account is an ADMIN. This
+   * is presentation only — the API refuses the routes regardless, so a user who
+   * types the URL gets a refusal from the server, not from this flag.
+   */
+  adminOnly?: boolean;
 }
 
 export const NAV_ITEMS: NavItem[] = [
@@ -36,9 +43,20 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/goals', label: 'Goals', icon: Target },
   { href: '/reports', label: 'Reports', icon: PiggyBank },
   { href: '/settings', label: 'Settings', icon: Settings },
+  { href: '/admin', label: 'Admin', icon: ShieldCheck, adminOnly: true },
 ];
+
+/** The navigation for a given role. */
+export function navItemsFor(role: string | undefined): NavItem[] {
+  return NAV_ITEMS.filter((item) => !item.adminOnly || role === 'ADMIN');
+}
 
 export const PRIMARY_NAV = NAV_ITEMS.filter((item) => item.primary);
 
 /** Everything the phone tab bar cannot hold. Listed in the More sheet. */
 export const SECONDARY_NAV = NAV_ITEMS.filter((item) => !item.primary);
+
+/** As above, but for a role — Admin appears in the More sheet for admins. */
+export function secondaryNavFor(role: string | undefined): NavItem[] {
+  return navItemsFor(role).filter((item) => !item.primary);
+}

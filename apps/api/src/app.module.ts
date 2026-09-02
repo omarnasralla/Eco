@@ -38,6 +38,7 @@ import { IncomeModule } from './modules/income/income.module';
 import { MailModule } from './modules/mail/mail.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { UsersModule } from './modules/users/users.module';
 
 @Module({
@@ -88,6 +89,7 @@ import { UsersModule } from './modules/users/users.module';
 
     AuthModule,
     UsersModule,
+    AdminModule,
     CategoriesModule,
     IncomeModule,
     ExpensesModule,

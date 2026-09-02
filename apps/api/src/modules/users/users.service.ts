@@ -53,7 +53,7 @@ export class UsersService {
       await this.redis.invalidateUser(userId);
     }
 
-    await this.redis.del(`auth:user:${userId}`);
+    await this.redis.invalidateUser(userId);
     return toUserDto(user);
   }
 
@@ -84,7 +84,6 @@ export class UsersService {
     ]);
 
     await this.redis.invalidateUser(userId);
-    await this.redis.del(`auth:user:${userId}`);
     this.logger.warn(`User ${userId} scheduled for deletion on ${purgeDate.toISOString()}`);
 
     return { purgeScheduledFor: purgeDate.toISOString() };

@@ -31,3 +31,12 @@ export class ZodValidationPipe<T> implements PipeTransform<unknown, T> {
 
 /** Convenience factory: `@Body(zodBody(expenseSchema)) dto: ExpenseInput`. */
 export const zodBody = <T>(schema: ZodSchema<T>) => new ZodValidationPipe(schema);
+
+/**
+ * The same pipe applied to a query string rather than a body.
+ *
+ * A separate name only because the call site reads better for it — and because
+ * query values arrive as strings, so schemas used here need coercion where the
+ * body equivalents would not.
+ */
+export const zodQuery = <T>(schema: ZodSchema<T>) => new ZodValidationPipe(schema);

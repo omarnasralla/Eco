@@ -392,3 +392,76 @@ export interface ExchangeRateDto {
   provider: string;
   fetchedAt: string;
 }
+
+/* ── Admin ────────────────────────────────────────────────── */
+
+/**
+ * A user as the admin console lists them.
+ *
+ * Deliberately not `UserDto`: an administrator needs the operational fields a
+ * user never sees about themselves (lock state, session validity, how much data
+ * the account holds) and must never receive the credential fields that
+ * `UserDto` also omits — password hash, TOTP secret, recovery codes.
+ */
+export interface AdminUserRow {
+  id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  currency: string;
+  country: string | null;
+  emailVerified: boolean;
+  twoFactorEnabled: boolean;
+  /** Soft-deleted accounts are listed, not hidden: they can be restored. */
+  deletedAt: string | null;
+  /** Set while the account is locked out after repeated failed logins. */
+  lockedUntil: string | null;
+  failedLoginAttempts: number;
+  lastLoginAt: string | null;
+  createdAt: string;
+  counts: {
+    expenses: number;
+    incomeSources: number;
+    debts: number;
+    goals: number;
+    budgets: number;
+  };
+}
+
+export interface AdminUserDetail extends AdminUserRow {
+  timezone: string;
+  locale: string;
+  onboardingCompleted: boolean;
+  /** Refresh tokens issued before this instant are rejected. */
+  tokensValidFrom: string;
+  recentActivity: Array<{
+    id: string;
+    action: string;
+    entityType: string;
+    createdAt: string;
+    ipAddress: string | null;
+  }>;
+}
+
+export interface AdminStats {
+  users: {
+    total: number;
+    active: number;
+    /** Counted separately from `active`: a locked account is still an account. */
+    locked: number;
+    deleted: number;
+    unverified: number;
+    admins: number;
+    /** Signed in at least once in the last 30 days. */
+    activeLast30Days: number;
+    newLast30Days: number;
+  };
+  data: {
+    expenses: number;
+    incomeSources: number;
+    debts: number;
+    goals: number;
+    budgets: number;
+    aiConversations: number;
+  };
+}

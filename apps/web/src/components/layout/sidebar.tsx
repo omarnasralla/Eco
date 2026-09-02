@@ -6,7 +6,7 @@ import { LogOut } from 'lucide-react';
 import { useAuth } from '@/lib/auth-provider';
 import { cn, initials } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { NAV_ITEMS } from './nav-items';
+import { navItemsFor } from './nav-items';
 import { EcoMark } from './eco-mark';
 
 /** Desktop navigation. Hidden below `lg`, where the tab bar takes over. */
@@ -22,7 +22,7 @@ export function Sidebar() {
       </div>
 
       <nav aria-label="Primary" className="flex-1 space-y-0.5 overflow-y-auto p-3">
-        {NAV_ITEMS.map((item) => {
+        {navItemsFor(user?.role).map((item) => {
           const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
           return (

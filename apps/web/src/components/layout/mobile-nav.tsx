@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { PRIMARY_NAV, SECONDARY_NAV } from './nav-items';
+import { PRIMARY_NAV, secondaryNavFor, type NavItem } from './nav-items';
 
 const TAB_CLASS =
   'flex min-h-[56px] w-full flex-col items-center justify-center gap-0.5 px-1 py-2 text-[11px] font-medium transition-colors';
@@ -38,7 +38,8 @@ export function MobileNav() {
   useEffect(() => setMoreOpen(false), [pathname]);
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
-  const moreActive = SECONDARY_NAV.some((item) => isActive(item.href));
+  const secondary = secondaryNavFor(user?.role);
+  const moreActive = secondary.some((item) => isActive(item.href));
 
   return (
     <>
@@ -85,6 +86,7 @@ export function MobileNav() {
       <MoreSheet
         open={moreOpen}
         onOpenChange={setMoreOpen}
+        items={secondary}
         isActive={isActive}
         user={user}
         onSignOut={() => void logout()}
@@ -96,12 +98,16 @@ export function MobileNav() {
 function MoreSheet({
   open,
   onOpenChange,
+  items,
   isActive,
   user,
   onSignOut,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Passed in rather than derived here: the list depends on the signed-in
+   *  role, and this component does not read auth. */
+  items: NavItem[];
   isActive: (href: string) => boolean;
   user: { name: string; email: string } | null;
   onSignOut: () => void;
@@ -118,7 +124,7 @@ function MoreSheet({
 
         <nav aria-label="More destinations">
           <ul className="-mx-2 divide-y">
-            {SECONDARY_NAV.map((item) => {
+            {items.map((item) => {
               const active = isActive(item.href);
               const Icon = item.icon;
               return (

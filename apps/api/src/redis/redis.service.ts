@@ -91,6 +91,13 @@ export class RedisService implements OnModuleDestroy {
   /** Invalidates everything derived from a user's financial data. */
   async invalidateUser(userId: string): Promise<void> {
     await this.delPattern(`eco:${userId}:*`);
+    // The authenticated-user record the JWT strategy caches lives outside the
+    // `eco:` namespace, and it carries role, deletedAt and tokensValidFrom.
+    // Leaving it behind means a demoted admin keeps admin for the rest of the
+    // TTL, a revoked session keeps working, and a deleted account still
+    // authenticates — so it is cleared here rather than left to each caller to
+    // remember, which is how it came to be missed.
+    await this.del(`auth:user:${userId}`);
   }
 
   /** Namespaced key builder — the only sanctioned way to construct a key. */

@@ -1,6 +1,9 @@
 'use client';
 
 import type {
+  AdminStats,
+  AdminUserDetail,
+  AdminUserRow,
   BudgetDto,
   CategoryBreakdownDto,
   CategoryDto,
@@ -42,6 +45,9 @@ export const queryKeys = {
   goals: ['goals'] as const,
   goalContributions: (id: string) => ['goals', id, 'contributions'] as const,
   budget: (month: string) => ['budgets', month] as const,
+  adminStats: ['admin', 'stats'] as const,
+  adminUsers: (search: string, status: string) => ['admin', 'users', search, status] as const,
+  adminUser: (id: string) => ['admin', 'users', id] as const,
   forecast: (horizon: number) => ['ai', 'forecast', horizon] as const,
   patterns: ['ai', 'patterns'] as const,
   recommendations: ['ai', 'recommendations'] as const,
@@ -54,6 +60,15 @@ export const queryKeys = {
 } as const;
 
 export const fetchers = {
+  adminStats: () => api.get<AdminStats>('/admin/stats'),
+
+  adminUsers: (search?: string, status?: string) =>
+    api.get<Paginated<AdminUserRow>>('/admin/users', {
+      query: { search: search || undefined, status: status || undefined, limit: 50 },
+    }),
+
+  adminUser: (id: string) => api.get<AdminUserDetail>(`/admin/users/${id}`),
+
   dashboardSummary: (month?: string) =>
     api.get<DashboardSummaryDto>('/dashboard/summary', { query: { month } }),
 
