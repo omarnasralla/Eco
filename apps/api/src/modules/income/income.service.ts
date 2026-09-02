@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { toMonthlyMinor } from '@eco/core';
 import type { IncomeSourceDto, IncomeSourceInput } from '@eco/shared';
 import type { IncomeSource } from '@prisma/client';
@@ -81,6 +81,23 @@ export class IncomeService {
       where: { id, userId, deletedAt: null },
     });
     if (!existing) throw new NotFoundException('Income source not found');
+
+    // `updateIncomeSourceSchema` is `incomeSourceSchema.innerType().partial()`,
+    // and `innerType()` drops the refine that keeps the end date on or after
+    // the start — so on this path the rule has to be enforced here. It also has
+    // to be enforced against the *effective* window rather than the payload:
+    // an edit that sends only an end date, or only a start date, is still
+    // capable of inverting the pair. An inverted window is not cosmetic, since
+    // `monthlyTotal` now counts a source only while it is running: the source
+    // would silently stop counting, which is the same "income stays flat and
+    // nothing says why" confusion the date filter exists to prevent.
+    const effectiveStart =
+      input.startDate !== undefined ? input.startDate : toIsoDate(existing.startDate);
+    const effectiveEnd =
+      input.endDate !== undefined ? input.endDate : toIsoDate(existing.endDate);
+    if (effectiveEnd && effectiveStart && effectiveEnd < effectiveStart) {
+      throw new BadRequestException('End date must fall on or after the start date');
+    }
 
     const source = await this.prisma.incomeSource.update({
       where: { id },
