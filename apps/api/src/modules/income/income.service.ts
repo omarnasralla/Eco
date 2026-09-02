@@ -6,7 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { CurrencyService } from '../currency/currency.service';
 import { toNumber } from '../../common/utils/money';
-import { fromIsoDate, requireIsoDate, toIsoDate } from '../../common/utils/dates';
+import { fromIsoDate, requireIsoDate, toIsoDate, todayIso } from '../../common/utils/dates';
 
 function toDto(source: IncomeSource): IncomeSourceDto {
   const amountMinor = toNumber(source.amountMinor);
@@ -153,8 +153,20 @@ export class IncomeService {
 
   /** Monthly run rate across every active stream, in the user's base currency. */
   async monthlyTotal(userId: string, userCurrency: string): Promise<number> {
+    // A run rate is what you earn *now*, so a source only counts while it is
+    // running: `isActive` is the manual pause, and the date window is the
+    // factual one. Without the window an ended job would be counted forever —
+    // a user who records the end date of a contract would watch their income
+    // stay flat and their savings rate stay wrong.
+    const today = fromIsoDate(todayIso());
     const sources = await this.prisma.incomeSource.findMany({
-      where: { userId, deletedAt: null, isActive: true },
+      where: {
+        userId,
+        deletedAt: null,
+        isActive: true,
+        startDate: { lte: today },
+        OR: [{ endDate: null }, { endDate: { gte: today } }],
+      },
     });
 
     let total = 0;

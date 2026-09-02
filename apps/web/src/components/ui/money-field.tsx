@@ -145,6 +145,12 @@ export function MoneyField({
         <Select
           value={currency}
           onValueChange={(next) => {
+            // Radix emits an empty value while its items are still registering,
+            // which happens when a dialog opens on mount rather than on a click
+            // (`/income?new=1`). No item has an empty value, so this is never a
+            // real choice — taking it would blank the field and leave the form
+            // unsubmittable.
+            if (!next) return;
             onCurrencyChange(next);
             // The typed figure is a quantity of the *new* currency, and its
             // minor-unit scale may differ (JOD has three decimals, JPY none),
@@ -156,7 +162,13 @@ export function MoneyField({
           }}
         >
           <SelectTrigger className="w-28 shrink-0" aria-label={`${label} currency`}>
-            <SelectValue />
+            {/* Rendered explicitly rather than left to `SelectValue` to look
+                up from the registered items: the code is exactly what we want
+                the trigger to read, and it cannot go blank if the lookup and
+                the value ever disagree. */}
+            <SelectValue>
+              {currencyMeta(currency).symbol} {currency}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             {CURRENCIES.map((item) => (

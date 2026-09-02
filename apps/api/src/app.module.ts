@@ -3,7 +3,15 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, Reflector } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
-import { RATE_LIMITS } from '@eco/shared';
+
+/**
+ * The ceiling a named throttler gets when a route has not opted into it.
+ *
+ * High enough never to bind on its own — the `default` bucket is what bounds
+ * ordinary traffic — while still finite, so a runaway client cannot consume
+ * memory in the throttler's storage without limit.
+ */
+const NAMED_BUCKET_CEILING = 1_000_000;
 import { configuration } from './config/configuration';
 import { validateEnv } from './config/env.validation';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -53,10 +61,21 @@ import { UsersModule } from './modules/users/users.module';
             ttl: config.getOrThrow<number>('throttle.ttl') * 1000,
             limit: config.getOrThrow<number>('throttle.limit'),
           },
-          // Named buckets referenced by @Throttle on specific routes.
-          { name: 'auth', ttl: 60_000, limit: config.getOrThrow<number>('throttle.authLimit') },
-          { name: 'ai', ttl: 60_000, limit: RATE_LIMITS.ai.max },
-          { name: 'export', ttl: 3_600_000, limit: RATE_LIMITS.export.max },
+          // Named buckets, consumed by @Throttle on the routes that opt in.
+          //
+          // Every configured throttler is evaluated on every request — a named
+          // bucket is not dormant for routes that do not decorate — so the
+          // limit set here is a *global* ceiling, and only the @Throttle
+          // override on an opted-in route sets that route's real limit. These
+          // ceilings are therefore deliberately unreachable: giving `export`
+          // its intended 20-per-hour here capped the entire API at twenty
+          // requests an hour for everyone, which is roughly three dashboard
+          // loads. The real limits still live on the routes:
+          // auth (auth.controller), ai (ai.controller), export
+          // (reports.controller).
+          { name: 'auth', ttl: 60_000, limit: NAMED_BUCKET_CEILING },
+          { name: 'ai', ttl: 60_000, limit: NAMED_BUCKET_CEILING },
+          { name: 'export', ttl: 3_600_000, limit: NAMED_BUCKET_CEILING },
         ],
       }),
     }),

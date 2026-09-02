@@ -176,9 +176,34 @@ frequency is a complete entry:
 Saving refreshes the run rate, the dashboard, your budget headroom and the
 health score together — income moves all of them, so none is left stale.
 
-To record a second stream, tap **Add** again. Editing and deleting an existing
-source still have no UI; use `PATCH /income/:id` and `DELETE /income/:id` for
-now.
+To record a second stream, tap **Add** again.
+
+### Changing one later
+
+Tap any source in the list to edit it — the whole row opens the form, so a
+raise is two taps.
+
+- **A raise or a pay cut** — change the amount and save. The run rate is a
+  *present-day* figure (the trend chart applies today's income to every month
+  it draws), so there is no history to restate and nothing else to update.
+- **A job or contract that ends** — set **Ends on**. Once that date has passed
+  the source stops counting towards your run rate, while the record stays on
+  the page marked *ended*. The end date must fall on or after the start date;
+  the form says so if it does not.
+- **A pause** — set the status to *Paused*, for a client between contracts.
+  It stops counting immediately and can be resumed from the same place.
+- **Something entered by mistake** — **Delete**, behind a confirmation. This
+  removes the record; pausing is the better move when you only want it to stop
+  counting.
+
+A source is counted in the run rate only when all three hold: it is not
+paused, its start date has passed, and its end date has not. Any source that
+fails one of these is labelled on the row — *paused*, *ended*, *not started* —
+so a total you did not expect can always be accounted for.
+
+Editing an existing source does not change the currency your *next* new entry
+defaults to: correcting an old riyal salary should not make tomorrow's expense
+default to riyals.
 
 ### Adding income through the API
 
@@ -306,11 +331,10 @@ wobbles across.
 |---|---|---|
 | No create UI for Debts or Budgets | They cannot be set up in the app | Their `POST` endpoints, documented in `docs/03-api-design.md` |
 | No withdrawal or edit UI for goals | Correcting a payment needs the API | `POST /goals/:id/contributions` with a negative `amountMinor` |
-| No edit or delete UI for income | A typo means fixing it over the API | `PATCH /income/:id`, `DELETE /income/:id` |
 | No UI for income receipts | Income-consistency analysis has no actuals to read | `POST /income/:id/receipts` |
 | Settings reports 2FA state but cannot enable it | Two-factor cannot be turned on from the UI | `POST /auth/2fa/setup` then `POST /auth/2fa/enable` |
 | Changing the base currency does not rebase past transactions | Totals spanning the change mix two base currencies | Set the base currency before entering data |
 
-Income, savings and mobile navigation were all on this list; all three are
-fixed. Expenses, income and goals have create forms, amounts can be entered in
+Income (adding and editing), savings and mobile navigation were all on this
+list; all of them are fixed. Expenses, income and goals have create forms, amounts can be entered in
 any published currency, and every page is reachable by tap on a phone.
