@@ -38,6 +38,9 @@ const DialogContent = forwardRef<
         // two idioms — each is what the platform's users expect.
         'fixed z-50 grid w-full gap-4 border bg-background p-6 shadow-lg duration-200',
         'inset-x-0 bottom-0 rounded-t-2xl data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
+        // A sheet sits on the bottom edge, so its last control lands under the
+        // iOS home indicator without this. The tab bar pads for the same reason.
+        'pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:pb-6',
         'sm:inset-x-auto sm:bottom-auto sm:left-[50%] sm:top-[50%] sm:max-w-lg sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-xl sm:data-[state=closed]:slide-out-to-left-1/2 sm:data-[state=closed]:slide-out-to-top-[48%] sm:data-[state=open]:slide-in-from-left-1/2 sm:data-[state=open]:slide-in-from-top-[48%]',
         'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
         'max-h-[90dvh] overflow-y-auto',

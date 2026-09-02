@@ -6,6 +6,7 @@ import type {
   CategoryDto,
   DashboardSummaryDto,
   DebtDto,
+  ExchangeRateDto,
   ExpenseDto,
   ForecastDto,
   IncomeSourceDto,
@@ -39,6 +40,7 @@ export const queryKeys = {
   debts: ['debts'] as const,
   debtComparison: (budget: number) => ['debts', 'compare', budget] as const,
   goals: ['goals'] as const,
+  goalContributions: (id: string) => ['goals', id, 'contributions'] as const,
   budget: (month: string) => ['budgets', month] as const,
   forecast: (horizon: number) => ['ai', 'forecast', horizon] as const,
   patterns: ['ai', 'patterns'] as const,
@@ -46,6 +48,7 @@ export const queryKeys = {
   healthScore: ['ai', 'health-score'] as const,
   conversations: ['ai', 'conversations'] as const,
   conversation: (id: string) => ['ai', 'conversation', id] as const,
+  exchangeRates: (date?: string) => ['currency', 'rates', date ?? 'latest'] as const,
   notifications: ['notifications'] as const,
   unreadCount: ['notifications', 'unread-count'] as const,
 } as const;
@@ -74,7 +77,10 @@ export const fetchers = {
 
   categories: () => api.get<CategoryDto[]>('/categories'),
 
-  income: () => api.get<IncomeSourceDto[]>('/income'),
+  // Inactive and ended sources are listed too: a source you paused or a
+  // contract that finished still has to be findable to be edited or resumed.
+  // The page marks their state rather than hiding them.
+  income: () => api.get<IncomeSourceDto[]>('/income', { query: { includeInactive: 'true' } }),
 
   incomeSummary: () =>
     api.get<{ monthlyTotalMinor: number; currency: string }>('/income/summary'),
@@ -88,7 +94,13 @@ export const fetchers = {
 
   goals: () => api.get<SavingsGoalDto[]>('/goals'),
 
-  budget: (month: string) => api.get<BudgetDto | null>(`/budgets/${month}`),
+  goalContributions: (goalId: string) =>
+    api.get<GoalContributionRow[]>(`/goals/${goalId}/contributions`),
+
+  // React Query rejects `undefined` as query data, so an absent budget is
+  // normalised to an explicit null the UI can render an empty state from.
+  budget: (month: string) =>
+    api.get<BudgetDto | null>(`/budgets/${month}`).then((b) => b ?? null),
 
   forecast: (horizonMonths = 6) =>
     api.get<ForecastDto>('/ai/forecast', { query: { horizonMonths } }),
@@ -102,9 +114,22 @@ export const fetchers = {
   notifications: () => api.get<Paginated<NotificationDto>>('/notifications'),
 
   unreadCount: () => api.get<{ count: number }>('/notifications/unread-count'),
+
+  exchangeRates: (date?: string) =>
+    api.get<ExchangeRateDto>('/currency/rates', { query: { date } }),
 };
 
 /* ── Response shapes the API composes rather than importing wholesale ─── */
+
+/** One payment into (or out of) a goal, as entered and as converted. */
+export interface GoalContributionRow {
+  id: string;
+  amountMinor: number;
+  currency: string;
+  goalAmountMinor: number;
+  date: string;
+  notes: string | null;
+}
 
 export interface DebtStrategySummary {
   strategy: 'SNOWBALL' | 'AVALANCHE' | 'CUSTOM';

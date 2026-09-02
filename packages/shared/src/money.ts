@@ -27,6 +27,10 @@ export const CURRENCIES: readonly CurrencyMeta[] = [
   { code: 'AED', name: 'UAE Dirham', symbol: 'د.إ', decimals: 2 },
   { code: 'SAR', name: 'Saudi Riyal', symbol: '﷼', decimals: 2 },
   { code: 'EGP', name: 'Egyptian Pound', symbol: 'E£', decimals: 2 },
+  // Zero decimals, matching ISO 4217 and CLDR: the piastre is long defunct,
+  // and at ~89,500 to the dollar a ×100 scale would burn two orders of
+  // magnitude of the safe-integer range for a subunit nobody quotes.
+  { code: 'LBP', name: 'Lebanese Pound', symbol: 'ل.ل', decimals: 0 },
   { code: 'JOD', name: 'Jordanian Dinar', symbol: 'د.ا', decimals: 3 },
   { code: 'KWD', name: 'Kuwaiti Dinar', symbol: 'د.ك', decimals: 3 },
   { code: 'CAD', name: 'Canadian Dollar', symbol: 'CA$', decimals: 2 },

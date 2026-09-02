@@ -73,7 +73,7 @@ export const envSchema = z
     AI_SERVICE_URL: z.string().url().default('http://localhost:8000'),
     AI_SERVICE_TOKEN: z.string().default('replace_me_shared_service_token'),
 
-    FX_PROVIDER: z.enum(['ecb', 'openexchangerates', 'fixed']).default('ecb'),
+    FX_PROVIDER: z.enum(['erapi', 'ecb', 'openexchangerates', 'fixed']).default('erapi'),
     OPENEXCHANGERATES_APP_ID: z.string().optional(),
     BASE_CURRENCY: z.string().length(3).default('USD'),
 

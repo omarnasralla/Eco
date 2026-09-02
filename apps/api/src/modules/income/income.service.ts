@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { toMonthlyMinor } from '@eco/core';
 import type { IncomeSourceDto, IncomeSourceInput } from '@eco/shared';
 import type { IncomeSource } from '@prisma/client';
@@ -6,7 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { CurrencyService } from '../currency/currency.service';
 import { toNumber } from '../../common/utils/money';
-import { fromIsoDate, requireIsoDate, toIsoDate } from '../../common/utils/dates';
+import { fromIsoDate, requireIsoDate, toIsoDate, todayIso } from '../../common/utils/dates';
 
 function toDto(source: IncomeSource): IncomeSourceDto {
   const amountMinor = toNumber(source.amountMinor);
@@ -82,6 +82,23 @@ export class IncomeService {
     });
     if (!existing) throw new NotFoundException('Income source not found');
 
+    // `updateIncomeSourceSchema` is `incomeSourceSchema.innerType().partial()`,
+    // and `innerType()` drops the refine that keeps the end date on or after
+    // the start — so on this path the rule has to be enforced here. It also has
+    // to be enforced against the *effective* window rather than the payload:
+    // an edit that sends only an end date, or only a start date, is still
+    // capable of inverting the pair. An inverted window is not cosmetic, since
+    // `monthlyTotal` now counts a source only while it is running: the source
+    // would silently stop counting, which is the same "income stays flat and
+    // nothing says why" confusion the date filter exists to prevent.
+    const effectiveStart =
+      input.startDate !== undefined ? input.startDate : toIsoDate(existing.startDate);
+    const effectiveEnd =
+      input.endDate !== undefined ? input.endDate : toIsoDate(existing.endDate);
+    if (effectiveEnd && effectiveStart && effectiveEnd < effectiveStart) {
+      throw new BadRequestException('End date must fall on or after the start date');
+    }
+
     const source = await this.prisma.incomeSource.update({
       where: { id },
       data: {
@@ -153,14 +170,26 @@ export class IncomeService {
 
   /** Monthly run rate across every active stream, in the user's base currency. */
   async monthlyTotal(userId: string, userCurrency: string): Promise<number> {
+    // A run rate is what you earn *now*, so a source only counts while it is
+    // running: `isActive` is the manual pause, and the date window is the
+    // factual one. Without the window an ended job would be counted forever —
+    // a user who records the end date of a contract would watch their income
+    // stay flat and their savings rate stay wrong.
+    const today = fromIsoDate(todayIso());
     const sources = await this.prisma.incomeSource.findMany({
-      where: { userId, deletedAt: null, isActive: true },
+      where: {
+        userId,
+        deletedAt: null,
+        isActive: true,
+        startDate: { lte: today },
+        OR: [{ endDate: null }, { endDate: { gte: today } }],
+      },
     });
 
     let total = 0;
     for (const source of sources) {
       const monthly = toMonthlyMinor(toNumber(source.amountMinor), source.frequency);
-      total += await this.currency.convert(monthly, source.currency, userCurrency);
+      total += await this.currency.convertForDisplay(monthly, source.currency, userCurrency);
     }
     return total;
   }

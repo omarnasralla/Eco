@@ -61,7 +61,7 @@ export class AiService {
     return this.redis.remember(cacheKey, CACHE_TTL_SECONDS.forecast, async () => {
       const transactions = await this.context.transactions(userId, 24);
       const monthlyIncomeMinor = await this.income.monthlyTotal(userId, userCurrency);
-      const openingBalanceMinor = await this.goals.totalSaved(userId);
+      const openingBalanceMinor = await this.goals.totalSaved(userId, userCurrency);
       // Complete months only: the month in progress is partial, and feeding it
       // in as though it were finished reads as a collapse in spending.
       const expenseHistory = completeMonthsOnly(
