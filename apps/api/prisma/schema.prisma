@@ -587,8 +587,15 @@ model GoalContribution {
   userId      String   @db.Uuid
   goalId      String   @db.Uuid
   /// Signed: a withdrawal from the goal is a negative contribution.
+  /// Denominated in `currency` — what the user actually typed.
   amountMinor BigInt
-  date        DateTime @db.Date
+  currency    String   @db.Char(3)
+  /// The same contribution converted into the goal's currency at the rate on
+  /// `date`, then frozen. The goal's running balance is the sum of these, so
+  /// paying into a USD goal in SAR cannot restate the balance every time the
+  /// riyal moves — the same reason expenses freeze baseAmountMinor.
+  goalAmountMinor BigInt
+  date            DateTime @db.Date
   notes       String?  @db.Text
   createdAt   DateTime @default(now())
 

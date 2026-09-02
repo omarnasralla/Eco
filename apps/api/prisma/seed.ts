@@ -405,6 +405,10 @@ async function main(): Promise<void> {
           userId: user.id,
           goalId: goal.id,
           amountMinor: BigInt(monthly),
+          // The demo pays into each goal in that goal's own currency, so the
+          // entered and converted amounts are the same figure.
+          currency: goal.currency,
+          goalAmountMinor: BigInt(monthly),
           date: new Date(
             Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - monthsAgo, 26),
           ),

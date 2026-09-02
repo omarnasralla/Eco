@@ -2,13 +2,14 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
-import { Suspense, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2, Plus, Search } from 'lucide-react';
-import { expenseSchema, formatMoney, toMinorUnits, type ExpenseInput } from '@eco/shared';
+import { expenseSchema, formatMoney, type ExpenseInput } from '@eco/shared';
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
+import { useEntryCurrency } from '@/lib/entry-currency';
 import { useMoneyFormat } from '@/lib/auth-provider';
 import { formatDate } from '@/lib/utils';
 import { useChartTheme } from '@/components/charts/chart-theme';
@@ -25,6 +26,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { MoneyField } from '@/components/ui/money-field';
 import {
   Select,
   SelectContent,
@@ -137,10 +139,14 @@ function ExpensesContent() {
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
-                    <p className="tabular text-sm font-medium">{money(expense.amountMinor)}</p>
+                    {/* The headline is the converted figure the API froze at the
+                        transaction date's rate — the same number the totals and
+                        charts sum. Reading amountMinor here would print riyals
+                        under a dollar sign. */}
+                    <p className="tabular text-sm font-medium">{money(expense.baseAmountMinor)}</p>
                     {expense.currency !== currency ? (
-                      // Original currency shown when it differs, so a
-                      // converted figure is never mistaken for what was paid.
+                      // Original shown when it differs, so a converted figure is
+                      // never mistaken for what was paid.
                       <p className="tabular text-xs text-muted-foreground">
                         {formatMoney(expense.amountMinor, expense.currency, { locale })}
                       </p>
@@ -157,7 +163,8 @@ function ExpensesContent() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         categories={categories.data ?? []}
-        currency={currency}
+        baseCurrency={currency}
+        locale={locale}
         onCreated={() => {
           // An expense changes the dashboard, the budget and the AI's picture,
           // so invalidate the lot rather than just this list.
@@ -172,16 +179,20 @@ function AddExpenseDialog({
   open,
   onOpenChange,
   categories,
-  currency,
+  baseCurrency,
+  locale,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   categories: Array<{ id: string; name: string }>;
-  currency: string;
+  /** What totals are reported in; the entry currency may differ. */
+  baseCurrency: string;
+  locale: string;
   onCreated: () => void;
 }) {
   const [amount, setAmount] = useState('');
+  const [entryCurrency, setEntryCurrency] = useEntryCurrency(baseCurrency);
   const [formError, setFormError] = useState<string | null>(null);
 
   const {
@@ -195,7 +206,7 @@ function AddExpenseDialog({
     resolver: zodResolver(expenseSchema),
     defaultValues: {
       amountMinor: 0,
-      currency,
+      currency: baseCurrency,
       categoryId: '',
       date: new Date().toISOString().slice(0, 10),
       isRecurring: false,
@@ -206,7 +217,16 @@ function AddExpenseDialog({
   const create = useMutation({
     mutationFn: (input: ExpenseInput) => api.post('/expenses', input),
     onSuccess: () => {
-      reset();
+      // Keep the currency they just used: the next expense is nearly always in
+      // the same one.
+      reset({
+        amountMinor: 0,
+        currency: entryCurrency,
+        categoryId: '',
+        date: new Date().toISOString().slice(0, 10),
+        isRecurring: false,
+        tags: [],
+      });
       setAmount('');
       onOpenChange(false);
       onCreated();
@@ -217,7 +237,10 @@ function AddExpenseDialog({
 
   const onSubmit = handleSubmit((values) => {
     setFormError(null);
-    create.mutate(values);
+    // The currency lives in component state rather than the form, so the two
+    // are joined here. `useEntryCurrency` only ever yields a supported code,
+    // which is what the schema's `currency` field accepts.
+    create.mutate({ ...values, currency: entryCurrency });
   });
 
   return (
@@ -229,30 +252,20 @@ function AddExpenseDialog({
         </DialogHeader>
 
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
-          <div className="space-y-2">
-            <Label htmlFor="amount">Amount</Label>
-            <Input
-              id="amount"
-              // A decimal keypad on mobile, and the value is converted to minor
-              // units before it leaves the form — floats never touch a balance.
-              inputMode="decimal"
-              placeholder="0.00"
-              value={amount}
-              onChange={(event) => {
-                const raw = event.target.value;
-                setAmount(raw);
-                const parsed = Number(raw);
-                setValue(
-                  'amountMinor',
-                  Number.isFinite(parsed) && parsed > 0 ? toMinorUnits(parsed, currency) : 0,
-                  { shouldValidate: true },
-                );
-              }}
-            />
-            {errors.amountMinor ? (
-              <p className="text-sm text-destructive">Enter an amount above zero.</p>
-            ) : null}
-          </div>
+          <MoneyField
+            id="amount"
+            label="Amount"
+            amount={amount}
+            onAmountChange={(raw, minorUnits) => {
+              setAmount(raw);
+              setValue('amountMinor', minorUnits, { shouldValidate: true });
+            }}
+            currency={entryCurrency}
+            onCurrencyChange={setEntryCurrency}
+            baseCurrency={baseCurrency}
+            locale={locale}
+            error={errors.amountMinor ? 'Enter an amount above zero.' : undefined}
+          />
 
           <div className="space-y-2">
             <Label htmlFor="category">Category</Label>

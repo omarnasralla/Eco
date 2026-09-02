@@ -62,32 +62,98 @@ destinations at once.
    leaves the machine. An unverified account still works; Settings shows an
    `unverified` badge.
 2. **Set your base currency** at `/settings` → *Profile* → *Base currency*.
-   Do this **before** entering data. Every total and chart is rendered in this
-   currency; past transactions keep the exchange rate from the day they
-   happened, so history stays consistent, but starting in the right currency
-   saves you reading converted figures.
+   Do this **before** entering data. Every total and chart is reported in this
+   currency, and you can still enter individual amounts in any other one
+   (section 3). Getting it right up front matters because the converted figure
+   frozen onto each past transaction is **not** rewritten when you change the
+   base later — deliberately, so last year's reports do not restate themselves
+   — which means totals spanning the change mix the old base with the new.
 3. **Choose a theme** at `/settings` → *Appearance* (light / dark / system).
 4. **Review security** at `/settings` → *Security*: it shows whether two-factor
    authentication is on, lists your active sessions, and offers *Sign out
    everywhere*. Note that the page only **reports** the 2FA state — there is no
    enable button yet; turning it on means calling `POST /auth/2fa/setup` and
    `POST /auth/2fa/enable`.
-5. **Add your income** at `/income` → *Add* — see section 3. This matters
-   first because the
-   dashboard's savings rate, the budget headroom, the debt payoff plans and
-   the AI health score all divide by income. With no income recorded, a fresh
+5. **Add your income** at `/income` → *Add* — see section 4. This matters first
+   because the dashboard's savings rate, the budget headroom, the debt payoff
+   plans and the AI health score all divide by income. With no income recorded, a fresh
    account reports a 0 monthly run rate and every derived figure reads as if
    you earn nothing.
 6. **Add expenses** at `/expenses` → *Add*. The dialog also opens directly via
    the deep link `/expenses?new=1`, which is handy as a home-screen shortcut;
    `/income?new=1` does the same for income.
-7. **Set a budget** at `/budgets`, and **goals** at `/goals`, once there is
-   income and a few weeks of spending for them to be measured against.
+7. **Add a savings goal** at `/goals` → *Add* — see section 5. This is where an
+   amount set aside for savings goes, and it is what the dashboard's net worth
+   is built from.
+8. **Set a budget** at `/budgets` once there is income and a few weeks of
+   spending for it to be measured against.
+
+If you earn or spend in a currency other than the one you picked in step 2,
+read section 3 before entering anything — the short version is that every
+amount field has a currency picker, and you should type what the receipt says.
 
 Your twelve default expense categories (Housing, Transportation, Food, …) are
 seeded automatically at registration — you do not need to create them.
 
-## 3. Adding income
+## 3. Entering money in another currency
+
+Your **base currency** (Settings → Profile) is what every total, chart and
+report is reported in. It is not what you have to type in.
+
+Every amount field in the app — expenses, income, savings targets, payments
+into a goal — is an amount *and* a currency picker. Living in Riyadh with your
+reports in dollars, you type what the receipt says, 87.50 SAR, and the field
+shows you what it will land as: `≈ $23.33 at today's rate`.
+
+What is stored is both figures. The original amount and currency are kept
+exactly as entered, and the converted figure is computed by the API **at the
+rate on the date of the transaction**, then frozen on the row. Backdating an
+expense to March uses March's rate, and today's move in the riyal cannot
+restate what you spent in March. That is why the preview says "≈": it uses
+today's rate, and only the saved figure is authoritative.
+
+The picker remembers your last choice per browser, so a run of riyal expenses
+takes one pick, not one per entry. Clearing site data resets it to your base
+currency; nothing about it is stored on the server.
+
+### Where the conversion happens
+
+| Entry | Stored as entered | Converted to | When |
+|---|---|---|---|
+| Expense | `amountMinor` + `currency` | your base currency (`baseAmountMinor`) | the expense's date |
+| Income source | `amountMinor` + `currency` | your base currency, for the run rate | read time |
+| Savings goal | its own `currency` | your base currency, for the dashboard total | today's rate |
+| Payment into a goal | `amountMinor` + `currency` | the **goal's** currency (`goalAmountMinor`) | the payment's date |
+
+A goal keeps its own currency. A riyal goal shows riyals on the Goals page —
+converting it for display would only invite you to compare it against a target
+in a different unit. Only the dashboard's *Total savings* is converted, because
+that figure is added to your other holdings.
+
+### When a currency is greyed out
+
+The picker only offers currencies your rate provider actually publishes. Which
+those are depends on `FX_PROVIDER`:
+
+- **`ecb`** (the default in `.env.example`) is the ECB reference set via
+  Frankfurter. It is free and needs no key, but it publishes **no Gulf
+  currencies** — no SAR, AED, EGP, JOD, KWD. If you are in KSA, this is the
+  wrong provider for you.
+- **`openexchangerates`** covers SAR and the rest; it needs a free
+  `OPENEXCHANGERATES_APP_ID`.
+- **`fixed`** is a small offline table for development.
+
+If the currency you want is greyed out, that is the provider, not the app.
+Switch `FX_PROVIDER` and restart; rates are fetched at boot when none are
+stored, so you do not have to wait for the 05:00 refresh.
+
+An amount in your base currency never needs a rate, so it always saves, even
+if the provider is unreachable. A cross-currency amount that cannot be
+converted is **refused** with an explanation rather than saved: filing 375
+riyals as 375 dollars is a silent four-fold error that is indistinguishable
+from a real figure afterwards.
+
+## 4. Adding income
 
 ### In the app
 
@@ -200,14 +266,51 @@ no UI for this yet.
 expenses, debts and goals already in place. Use it to see populated screens
 without entering anything; it is a development fixture, not your account.
 
-## 4. Summary of current gaps
+## 5. Savings
+
+Savings live as **goals**: a named thing you are putting money aside for, with
+a target. There is no separate "savings balance" — the sum of your goals *is*
+your savings, and it is what the dashboard's *Total savings* and *Net worth*
+are built from.
+
+### Creating one
+
+`/goals` → **Add** (or *Add your first goal* on an empty account). A name and a
+target amount are all that is required.
+
+| Field | Notes |
+|---|---|
+| **Name** | "Emergency fund", "Hajj", "New car". |
+| **Target amount** | With its own currency picker — the goal is then kept in that currency. |
+| **Already saved** | Optional opening balance, in the goal's currency. Use it when you have money set aside already rather than starting from zero. |
+| **Type** | Emergency fund, vacation, car, home deposit, retirement, education, custom. |
+| **Target date** | Optional. With one, Eco works out what you need to put aside each month and marks the goal *behind* if you are short. |
+
+### Paying into one
+
+**Add money** on the goal's card. Amount, currency, date, and an optional note.
+The amount may be in any currency: paying $1,000 into a riyal goal records the
+thousand dollars as entered and adds ﷼3,750 to the balance, at the rate on the
+payment's date.
+
+A negative amount is a withdrawal, over the API. The form takes positive
+amounts only for now — see the gaps below.
+
+Crossing 25%, 50%, 75% and 100% raises a notification, once each: a balance
+that hovers around a threshold cannot re-congratulate you every time it
+wobbles across.
+
+## 6. Summary of current gaps
 
 | Gap | Impact | Workaround |
 |---|---|---|
-| No create UI for Goals, Debts, Budgets | They cannot be set up in the app | Their `POST` endpoints, documented in `docs/03-api-design.md` |
+| No create UI for Debts or Budgets | They cannot be set up in the app | Their `POST` endpoints, documented in `docs/03-api-design.md` |
+| No withdrawal or edit UI for goals | Correcting a payment needs the API | `POST /goals/:id/contributions` with a negative `amountMinor` |
 | No edit or delete UI for income | A typo means fixing it over the API | `PATCH /income/:id`, `DELETE /income/:id` |
 | No UI for income receipts | Income-consistency analysis has no actuals to read | `POST /income/:id/receipts` |
 | Settings reports 2FA state but cannot enable it | Two-factor cannot be turned on from the UI | `POST /auth/2fa/setup` then `POST /auth/2fa/enable` |
+| Changing the base currency does not rebase past transactions | Totals spanning the change mix two base currencies | Set the base currency before entering data |
 
-Income and mobile navigation were on this list; both are fixed. Expenses and
-income now have create forms, and every page is reachable by tap on a phone.
+Income, savings and mobile navigation were all on this list; all three are
+fixed. Expenses, income and goals have create forms, amounts can be entered in
+any published currency, and every page is reachable by tap on a phone.

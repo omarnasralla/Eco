@@ -57,7 +57,7 @@ export class DashboardService {
         this.totalExpenses(userId, previousMonth),
         this.income.monthlyTotal(userId, userCurrency),
         this.totalDebt(userId),
-        this.goals.totalSaved(userId),
+        this.goals.totalSaved(userId, userCurrency),
         this.goalCounts(userId),
         this.upcomingBills(userId, 14),
       ]);

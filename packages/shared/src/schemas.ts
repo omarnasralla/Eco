@@ -254,6 +254,13 @@ export const updateSavingsGoalSchema = savingsGoalSchema.innerType().partial();
 
 export const goalContributionSchema = z.object({
   amountMinor: signedMinorAmount.refine((v) => v !== 0, 'Contribution cannot be zero'),
+  /**
+   * The currency the amount was entered in. Optional, and absent means "the
+   * goal's own currency" — which is what every caller written before
+   * multi-currency contributions meant, so their requests keep working
+   * unchanged. Anything else is converted at the contribution date's rate.
+   */
+  currency: currencyCode.optional(),
   date: isoDate,
   notes: z.string().trim().max(500).nullish(),
 });

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { CACHE_TTL_SECONDS, convertMinor, type ExchangeRateDto } from '@eco/shared';
@@ -15,7 +15,7 @@ import { RedisService } from '../../redis/redis.service';
  * moves would make a user's own reports disagree with each other.
  */
 @Injectable()
-export class CurrencyService {
+export class CurrencyService implements OnModuleInit {
   private readonly logger = new Logger(CurrencyService.name);
   private readonly base: string;
 
@@ -71,6 +71,20 @@ export class CurrencyService {
   }
 
   /**
+   * A deployment starts with an empty rate table, and the refresh cron does not
+   * run until 05:00. Until then every cross-currency conversion would have to
+   * fail, so fetch once at boot. Failure is logged and tolerated: the app must
+   * still start without a rate provider, and same-currency work is unaffected.
+   */
+  async onModuleInit(): Promise<void> {
+    const existing = await this.prisma.exchangeRate.count({ where: { base: this.base } });
+    if (existing > 0) return;
+
+    this.logger.log('No exchange rates stored; fetching an initial set');
+    await this.refreshRates();
+  }
+
+  /**
    * Converts minor units between currencies at a given date's rate.
    * Same-currency conversion short-circuits — by far the common case, and it
    * must never be perturbed by a rounding step.
@@ -86,10 +100,16 @@ export class CurrencyService {
     try {
       return convertMinor(amountMinor, from, to, rates);
     } catch (error) {
-      this.logger.warn(
-        `Conversion ${from}→${to} failed (${(error as Error).message}); storing unconverted`,
+      // Returning the amount unconverted here would file 375 riyals as 375
+      // dollars — a silent 4x error in the user's own ledger, indistinguishable
+      // afterwards from a real figure. A refused write is recoverable; a wrong
+      // number that looks right is not. Entries in the base currency never
+      // reach this path, so an outage cannot stop ordinary use.
+      this.logger.error(`Conversion ${from}→${to} failed: ${(error as Error).message}`);
+      throw new ServiceUnavailableException(
+        `No exchange rate is available for ${from} to ${to} right now. ` +
+          `Try again shortly, or enter the amount in ${to}.`,
       );
-      return amountMinor;
     }
   }
 
