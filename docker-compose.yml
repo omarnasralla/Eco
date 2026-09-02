@@ -13,8 +13,13 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-eco}
       # Deterministic collation keeps index behaviour identical across machines.
       POSTGRES_INITDB_ARGS: "--locale-provider=icu --icu-locale=en-US"
+    # Published to the loopback only. A bare "5432:5432" binds 0.0.0.0 and
+    # publishes the database to the internet, which Docker does without warning
+    # and which no firewall on this host was stopping. Nothing outside needs to
+    # reach these services directly: the API talks to them over localhost, and
+    # users reach the app through nginx on :80.
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -36,7 +41,7 @@ services:
       --maxmemory-policy allkeys-lru
       --appendonly yes
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -62,7 +67,7 @@ services:
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
     ports:
-      - "${API_PORT:-4000}:4000"
+      - "127.0.0.1:${API_PORT:-4000}:4000"
     volumes:
       - ./apps/api/src:/app/apps/api/src:ro
       - ./packages:/app/packages:ro
@@ -85,7 +90,7 @@ services:
       # Server-side rendering talks to the API over the internal network.
       API_INTERNAL_URL: http://api:4000/api/v1
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./apps/web/src:/app/apps/web/src:ro
       - ./packages:/app/packages:ro
@@ -106,7 +111,7 @@ services:
       ECO_LLM_MODEL: ${ECO_LLM_MODEL:-llama3.2:3b}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-replace_me_shared_service_token}
     ports:
-      - "${AI_SERVICE_PORT:-8000}:8000"
+      - "127.0.0.1:${AI_SERVICE_PORT:-8000}:8000"
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -117,7 +122,7 @@ services:
     container_name: eco-ollama
     restart: unless-stopped
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     volumes:
       - ollama_models:/root/.ollama
     # Uncomment on a GPU host to cut inference latency by roughly 10x.

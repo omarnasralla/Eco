@@ -16,6 +16,11 @@ export const envSchema = z
     TZ: z.string().default('UTC'),
 
     API_PORT: z.coerce.number().int().min(1).max(65535).default(4000),
+    // The interface to bind. Behind a reverse proxy this should be 127.0.0.1,
+    // so the API is reachable only through the proxy and not directly on its
+    // port. The default stays 0.0.0.0 because a container needs to accept
+    // traffic from outside its own network namespace.
+    API_HOST: z.string().min(1).default('0.0.0.0'),
     API_GLOBAL_PREFIX: z.string().default('api/v1'),
     CORS_ORIGINS: z.string().default('http://localhost:3000'),
     WEB_ORIGIN: z.string().url().default('http://localhost:3000'),

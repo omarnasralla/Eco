@@ -18,6 +18,7 @@ async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
   const isProduction = config.get<boolean>('isProduction') ?? false;
   const port = config.getOrThrow<number>('port');
+  const host = config.getOrThrow<string>('host');
   const prefix = config.getOrThrow<string>('globalPrefix');
 
   app.setGlobalPrefix(prefix);
@@ -88,7 +89,7 @@ async function bootstrap(): Promise<void> {
     });
   }
 
-  await app.listen(port, '0.0.0.0');
+  await app.listen(port, host);
 
   logger.log(`Eco API listening on http://localhost:${port}/${prefix}`);
   if (!isProduction) {

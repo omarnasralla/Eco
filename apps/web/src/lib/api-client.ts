@@ -101,7 +101,16 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
 }
 
 function buildUrl(path: string, query?: RequestOptions['query']): string {
-  const url = new URL(`${BASE_URL}${path}`);
+  // NEXT_PUBLIC_API_URL may be relative ("/api/v1") when a reverse proxy serves
+  // the app and the API from one origin — which is preferable, since it keeps
+  // the deployment's host out of the bundle and lets one build serve an IP, a
+  // domain and HTTPS alike. `new URL` rejects a relative string outright, so it
+  // needs the page's own origin as the base. An absolute BASE_URL ignores the
+  // base argument, so both forms work through this one path.
+  const url = new URL(
+    `${BASE_URL}${path}`,
+    typeof window === 'undefined' ? undefined : window.location.origin,
+  );
   if (query) {
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== null && value !== '') {

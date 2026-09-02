@@ -8,6 +8,7 @@ export const configuration = (env: Env) => ({
   env: env.NODE_ENV,
   isProduction: env.NODE_ENV === 'production',
   port: env.API_PORT,
+  host: env.API_HOST,
   globalPrefix: env.API_GLOBAL_PREFIX,
   webOrigin: env.WEB_ORIGIN,
   corsOrigins: env.CORS_ORIGINS.split(',')
