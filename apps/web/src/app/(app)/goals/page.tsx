@@ -5,11 +5,12 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { CheckCircle2, Loader2, Plus } from 'lucide-react';
+import { CheckCircle2, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import {
   GOAL_TYPES,
   GOAL_TYPE_LABELS,
   formatMoney,
+  toMajorUnits,
   goalContributionSchema,
   savingsGoalSchema,
   type GoalContributionInput,
@@ -55,6 +56,7 @@ function GoalsContent() {
 
   const [addOpen, setAddOpen] = useState(searchParams.get('new') === '1');
   const [contributeTo, setContributeTo] = useState<SavingsGoalDto | null>(null);
+  const [editing, setEditing] = useState<SavingsGoalDto | null>(null);
 
   const goals = useQuery({ queryKey: queryKeys.goals, queryFn: fetchers.goals });
 
@@ -158,14 +160,27 @@ function GoalsContent() {
                           ? ` · on course to finish ${formatDate(goal.projectedCompletionDate, locale)}`
                           : ''}
                     </p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setContributeTo(goal)}
-                    >
-                      <Plus className="size-4" aria-hidden />
-                      Add money
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setContributeTo(goal)}
+                      >
+                        <Plus className="size-4" aria-hidden />
+                        Add money
+                      </Button>
+                      {/* A goal is a card with several controls, so unlike the
+                          expense list the edit action is its own button rather
+                          than the whole surface. */}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditing(goal)}
+                        aria-label={`Edit ${goal.name}`}
+                      >
+                        <Pencil className="size-4" aria-hidden />
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -174,12 +189,27 @@ function GoalsContent() {
         </div>
       )}
 
-      <AddGoalDialog
+      <GoalDialog
         open={addOpen}
         onOpenChange={setAddOpen}
         baseCurrency={currency}
         locale={locale}
-        onCreated={refreshAll}
+        onSaved={refreshAll}
+      />
+
+      {/* Keyed so the form remounts per goal rather than carrying the previous
+          one's values across. */}
+      <GoalDialog
+        key={editing?.id ?? 'none'}
+        goal={editing ?? undefined}
+        open={editing !== null}
+        onOpenChange={(next) => (next ? undefined : setEditing(null))}
+        baseCurrency={currency}
+        locale={locale}
+        onSaved={() => {
+          setEditing(null);
+          refreshAll();
+        }}
       />
 
       <ContributeDialog
@@ -192,23 +222,28 @@ function GoalsContent() {
   );
 }
 
-function AddGoalDialog({
+function GoalDialog({
   open,
   onOpenChange,
   baseCurrency,
   locale,
-  onCreated,
+  onSaved,
+  goal,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   baseCurrency: string;
   locale: string;
-  onCreated: () => void;
+  onSaved: () => void;
+  /** The goal being edited, or undefined to create one. */
+  goal?: SavingsGoalDto;
 }) {
+  const editing = goal !== undefined;
   const [target, setTarget] = useState('');
   const [starting, setStarting] = useState('');
   const [goalCurrency, setGoalCurrency] = useEntryCurrency(baseCurrency);
   const [formError, setFormError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const {
     register,
@@ -230,8 +265,32 @@ function AddGoalDialog({
     },
   });
 
-  const create = useMutation({
-    mutationFn: (input: SavingsGoalInput) => api.post('/goals', input),
+  // Editing loads the goal's own values, including the currency it is held in.
+  useEffect(() => {
+    if (!open) return;
+    setFormError(null);
+    setConfirmingDelete(false);
+    if (goal) {
+      setTarget(String(toMajorUnits(goal.targetAmountMinor, goal.currency)));
+      setStarting(String(toMajorUnits(goal.currentAmountMinor, goal.currency)));
+      setGoalCurrency(goal.currency);
+      reset({
+        name: goal.name,
+        type: goal.type,
+        targetAmountMinor: goal.targetAmountMinor,
+        currentAmountMinor: goal.currentAmountMinor,
+        currency: goal.currency,
+        color: goal.color ?? '#0ea5e9',
+        icon: goal.icon ?? 'piggy-bank',
+        deadline: goal.deadline ? goal.deadline.slice(0, 10) : null,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, goal?.id]);
+
+  const save = useMutation({
+    mutationFn: (input: SavingsGoalInput) =>
+      editing ? api.patch(`/goals/${goal.id}`, input) : api.post('/goals', input),
     onSuccess: () => {
       reset({
         name: '',
@@ -245,10 +304,21 @@ function AddGoalDialog({
       setTarget('');
       setStarting('');
       onOpenChange(false);
-      onCreated();
+      onSaved();
     },
     onError: (error) =>
       setFormError(error instanceof ApiError ? error.message : 'Could not save that goal.'),
+  });
+
+  const remove = useMutation({
+    mutationFn: () => api.delete(`/goals/${goal!.id}`),
+    onSuccess: () => {
+      setConfirmingDelete(false);
+      onOpenChange(false);
+      onSaved();
+    },
+    onError: (error) =>
+      setFormError(error instanceof ApiError ? error.message : 'Could not delete that goal.'),
   });
 
   const onSubmit = handleSubmit((values) => {
@@ -256,16 +326,18 @@ function AddGoalDialog({
     // The currency lives in component state rather than the form, so the two
     // are joined here. `useEntryCurrency` only ever yields a supported code,
     // which is what the schema's `currency` field accepts.
-    create.mutate({ ...values, currency: goalCurrency });
+    save.mutate({ ...values, currency: goalCurrency });
   });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New savings goal</DialogTitle>
+          <DialogTitle>{editing ? 'Edit goal' : 'New savings goal'}</DialogTitle>
           <DialogDescription>
-            Something you are putting money aside for, and how much it needs.
+            {editing
+              ? 'Change the target, the date or the balance — or delete the goal.'
+              : 'Something you are putting money aside for, and how much it needs.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -351,14 +423,57 @@ function AddGoalDialog({
             </p>
           ) : null}
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={create.isPending}>
-              {create.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
-              Save goal
-            </Button>
+          <DialogFooter className="gap-2 sm:justify-between">
+            {editing && confirmingDelete ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  Delete “{goal.name}” and its contribution history?
+                </span>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={remove.isPending}
+                  onClick={() => remove.mutate()}
+                >
+                  {remove.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                  Delete
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfirmingDelete(false)}
+                >
+                  Keep
+                </Button>
+              </div>
+            ) : (
+              <>
+                {editing ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="text-destructive"
+                    onClick={() => setConfirmingDelete(true)}
+                  >
+                    <Trash2 className="mr-1 size-4" aria-hidden />
+                    Delete
+                  </Button>
+                ) : (
+                  <span />
+                )}
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={save.isPending}>
+                    {save.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                    {editing ? 'Save changes' : 'Save goal'}
+                  </Button>
+                </div>
+              </>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>

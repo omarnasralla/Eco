@@ -45,6 +45,7 @@ export const queryKeys = {
   goals: ['goals'] as const,
   goalContributions: (id: string) => ['goals', id, 'contributions'] as const,
   budget: (month: string) => ['budgets', month] as const,
+  budgetSuggestion: (month: string) => ['budgets', 'suggest', month] as const,
   adminStats: ['admin', 'stats'] as const,
   adminUsers: (search: string, status: string) => ['admin', 'users', search, status] as const,
   adminUser: (id: string) => ['admin', 'users', id] as const,
@@ -60,6 +61,12 @@ export const queryKeys = {
 } as const;
 
 export const fetchers = {
+  budgetSuggestion: (month: string) =>
+    api.get<{ lines: Array<{ categoryId: string; limitMinor: number }>; totalLimitMinor: number }>(
+      '/budgets/suggest',
+      { query: { month } },
+    ),
+
   adminStats: () => api.get<AdminStats>('/admin/stats'),
 
   adminUsers: (search?: string, status?: string) =>

@@ -41,10 +41,12 @@ export function useExchangeRates() {
 
 /**
  * Converts for display, returning null rather than throwing when a rate is
- * missing — a preview that cannot be computed should go quiet, not break the
- * form around it.
+ * missing — a figure that cannot be computed should go quiet, not break the
+ * screen around it. Exported because any list that totals amounts held in
+ * different currencies needs it: adding a riyal balance to a dollar one gives
+ * a number that is money in neither.
  */
-function safeConvert(
+export function safeConvert(
   minor: number,
   from: string,
   to: string,
