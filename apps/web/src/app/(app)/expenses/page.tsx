@@ -5,8 +5,14 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Loader2, Plus, Search } from 'lucide-react';
-import { expenseSchema, formatMoney, type ExpenseInput } from '@eco/shared';
+import { Loader2, Plus, Search, Trash2 } from 'lucide-react';
+import {
+  expenseSchema,
+  formatMoney,
+  toMajorUnits,
+  type ExpenseDto,
+  type ExpenseInput,
+} from '@eco/shared';
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
 import { useEntryCurrency } from '@/lib/entry-currency';
@@ -46,6 +52,7 @@ function ExpensesContent() {
   const [search, setSearch] = useState('');
   const [categoryId, setCategoryId] = useState<string>('all');
   const [dialogOpen, setDialogOpen] = useState(searchParams.get('new') === '1');
+  const [editing, setEditing] = useState<ExpenseDto | null>(null);
 
   const filters = useMemo(
     () => ({
@@ -124,7 +131,15 @@ function ExpensesContent() {
           ) : (
             <ul className="divide-y">
               {expenses.data!.items.map((expense) => (
-                <li key={expense.id} className="flex items-center gap-3 px-4 py-3">
+                <li key={expense.id}>
+                  {/* The whole row is the control: on a phone a small pencil
+                      icon is a worse target than the thing it would sit on. */}
+                  <button
+                    type="button"
+                    onClick={() => setEditing(expense)}
+                    aria-label={`Edit ${expense.merchant || expense.category?.name || 'expense'}`}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
+                  >
                   <span
                     aria-hidden
                     className="size-2.5 shrink-0 rounded-full"
@@ -153,6 +168,7 @@ function ExpensesContent() {
                       </p>
                     ) : null}
                   </div>
+                  </button>
                 </li>
               ))}
             </ul>
@@ -160,15 +176,31 @@ function ExpensesContent() {
         </CardContent>
       </Card>
 
-      <AddExpenseDialog
+      <ExpenseDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         categories={categories.data ?? []}
         baseCurrency={currency}
         locale={locale}
-        onCreated={() => {
+        onSaved={() => {
           // An expense changes the dashboard, the budget and the AI's picture,
           // so invalidate the lot rather than just this list.
+          void queryClient.invalidateQueries();
+        }}
+      />
+
+      {/* Keyed on the row so the form remounts with the right values rather
+          than carrying the previous expense's state into the next one. */}
+      <ExpenseDialog
+        key={editing?.id ?? 'none'}
+        expense={editing ?? undefined}
+        open={editing !== null}
+        onOpenChange={(next) => (next ? undefined : setEditing(null))}
+        categories={categories.data ?? []}
+        baseCurrency={currency}
+        locale={locale}
+        onSaved={() => {
+          setEditing(null);
           void queryClient.invalidateQueries();
         }}
       />
@@ -176,13 +208,14 @@ function ExpensesContent() {
   );
 }
 
-function AddExpenseDialog({
+function ExpenseDialog({
   open,
   onOpenChange,
   categories,
   baseCurrency,
   locale,
-  onCreated,
+  onSaved,
+  expense,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -190,12 +223,20 @@ function AddExpenseDialog({
   /** What totals are reported in; the entry currency may differ. */
   baseCurrency: string;
   locale: string;
-  onCreated: () => void;
+  onSaved: () => void;
+  /**
+   * The expense being edited, or undefined to record a new one. One component
+   * serves both because the fields are the same fields — splitting them would
+   * mean two places to keep the currency handling honest.
+   */
+  expense?: ExpenseDto;
 }) {
+  const editing = expense !== undefined;
   const [amount, setAmount] = useState('');
   const [entryCurrency, setEntryCurrency] = useEntryCurrency(baseCurrency);
   const [lastCategoryId, rememberCategory] = useLastCategory(categories.map((c) => c.id));
   const [formError, setFormError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const {
     register,
@@ -216,6 +257,31 @@ function AddExpenseDialog({
     },
   });
 
+  // Editing loads the row's own values, including the currency it was entered
+  // in rather than the remembered one — an edit is about this expense, not
+  // about what the next new entry should default to.
+  useEffect(() => {
+    if (!open) return;
+    setFormError(null);
+    setConfirmingDelete(false);
+    if (expense) {
+      setAmount(String(toMajorUnits(expense.amountMinor, expense.currency)));
+      setEntryCurrency(expense.currency);
+      reset({
+        amountMinor: expense.amountMinor,
+        currency: expense.currency,
+        categoryId: expense.category?.id ?? '',
+        date: expense.date.slice(0, 10),
+        merchant: expense.merchant ?? '',
+        notes: expense.notes ?? '',
+        isRecurring: expense.isRecurring,
+        tags: expense.tags ?? [],
+      });
+    }
+    // `expense` is the identity that matters; the setters are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, expense?.id]);
+
   // The remembered category arrives from storage after mount, so it is applied
   // here rather than in defaultValues. Guarded on the field being empty so it
   // can never overwrite a choice the user has already made in this dialog.
@@ -225,8 +291,9 @@ function AddExpenseDialog({
     }
   }, [open, lastCategoryId, setValue, watch]);
 
-  const create = useMutation({
-    mutationFn: (input: ExpenseInput) => api.post('/expenses', input),
+  const save = useMutation({
+    mutationFn: (input: ExpenseInput) =>
+      editing ? api.patch(`/expenses/${expense.id}`, input) : api.post('/expenses', input),
     onSuccess: () => {
       // Keep the currency they just used: the next expense is nearly always in
       // the same one.
@@ -242,10 +309,21 @@ function AddExpenseDialog({
       });
       setAmount('');
       onOpenChange(false);
-      onCreated();
+      onSaved();
     },
     onError: (error) =>
       setFormError(error instanceof ApiError ? error.message : 'Could not save that expense.'),
+  });
+
+  const remove = useMutation({
+    mutationFn: () => api.delete(`/expenses/${expense!.id}`),
+    onSuccess: () => {
+      setConfirmingDelete(false);
+      onOpenChange(false);
+      onSaved();
+    },
+    onError: (error) =>
+      setFormError(error instanceof ApiError ? error.message : 'Could not delete that expense.'),
   });
 
   const onSubmit = handleSubmit((values) => {
@@ -253,15 +331,22 @@ function AddExpenseDialog({
     // The currency lives in component state rather than the form, so the two
     // are joined here. `useEntryCurrency` only ever yields a supported code,
     // which is what the schema's `currency` field accepts.
-    create.mutate({ ...values, currency: entryCurrency });
+    // Only a new entry updates the remembered currency: correcting an old
+    // expense recorded in another currency should not change what the next
+    // fresh entry defaults to.
+    save.mutate({ ...values, currency: entryCurrency });
   });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add an expense</DialogTitle>
-          <DialogDescription>Record what you spent and where.</DialogDescription>
+          <DialogTitle>{editing ? 'Edit expense' : 'Add an expense'}</DialogTitle>
+          <DialogDescription>
+            {editing
+              ? 'Change any detail, or delete it. The converted figure is recalculated at the rate for the date you set.'
+              : 'Record what you spent and where.'}
+          </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
@@ -278,9 +363,10 @@ function AddExpenseDialog({
             baseCurrency={baseCurrency}
             locale={locale}
             error={errors.amountMinor ? 'Enter an amount above zero.' : undefined}
-            // The dialog is opened in order to type an amount, so the keypad
-            // should already be up when it appears.
-            autoFocus
+            // A new entry is opened in order to type an amount, so the keypad
+            // should already be up. An edit is usually opened to change
+            // something else, and stealing focus there would fight the user.
+            autoFocus={!editing}
           />
 
           <div className="space-y-2">
@@ -289,7 +375,7 @@ function AddExpenseDialog({
               value={watch('categoryId')}
               onValueChange={(value) => {
                 setValue('categoryId', value, { shouldValidate: true });
-                rememberCategory(value);
+                if (!editing) rememberCategory(value);
               }}
             >
               <SelectTrigger id="category">
@@ -324,14 +410,62 @@ function AddExpenseDialog({
             </p>
           ) : null}
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={create.isPending}>
-              {create.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
-              Save expense
-            </Button>
+          <DialogFooter className="gap-2 sm:justify-between">
+            {editing && confirmingDelete ? (
+              // Two-step rather than a browser confirm: the question names the
+              // amount, so a mis-tap on the wrong row is visible before it
+              // takes effect. The delete is soft on the server and reversible
+              // by support, but not by the user, so it is worth a beat.
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  Delete this {formatMoney(expense.amountMinor, expense.currency, { locale })}{' '}
+                  expense?
+                </span>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={remove.isPending}
+                  onClick={() => remove.mutate()}
+                >
+                  {remove.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                  Delete
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfirmingDelete(false)}
+                >
+                  Keep
+                </Button>
+              </div>
+            ) : (
+              <>
+                {editing ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="text-destructive"
+                    onClick={() => setConfirmingDelete(true)}
+                  >
+                    <Trash2 className="mr-1 size-4" aria-hidden />
+                    Delete
+                  </Button>
+                ) : (
+                  <span />
+                )}
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={save.isPending}>
+                    {save.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                    {editing ? 'Save changes' : 'Save expense'}
+                  </Button>
+                </div>
+              </>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>
