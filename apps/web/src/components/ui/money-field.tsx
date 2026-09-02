@@ -80,6 +80,7 @@ export function MoneyField({
   hint,
   placeholder = '0.00',
   allowNegative = false,
+  autoFocus = false,
 }: {
   id?: string;
   label: string;
@@ -96,6 +97,13 @@ export function MoneyField({
   hint?: string;
   placeholder?: string;
   allowNegative?: boolean;
+  /**
+   * Opens the keypad as soon as the field mounts. Worth setting when the field
+   * is the first thing in a dialog the user opened *in order to* type a number:
+   * it removes a tap, and on a phone that tap is the difference between logging
+   * a coffee at the counter and meaning to later.
+   */
+  autoFocus?: boolean;
 }) {
   const generatedId = useId();
   const fieldId = id ?? generatedId;
@@ -131,6 +139,9 @@ export function MoneyField({
           // A decimal keypad on mobile, and the value is converted to minor
           // units before it leaves the form — floats never touch a balance.
           inputMode="decimal"
+          // eslint-disable-next-line jsx-a11y/no-autofocus -- opt-in, and only
+          // used where the field is the reason the dialog was opened.
+          autoFocus={autoFocus}
           placeholder={placeholder}
           value={amount}
           className="flex-1"

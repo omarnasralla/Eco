@@ -10,6 +10,7 @@ import { expenseSchema, formatMoney, type ExpenseInput } from '@eco/shared';
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
 import { useEntryCurrency } from '@/lib/entry-currency';
+import { useLastCategory } from '@/lib/last-category';
 import { useMoneyFormat } from '@/lib/auth-provider';
 import { formatDate } from '@/lib/utils';
 import { useChartTheme } from '@/components/charts/chart-theme';
@@ -193,6 +194,7 @@ function AddExpenseDialog({
 }) {
   const [amount, setAmount] = useState('');
   const [entryCurrency, setEntryCurrency] = useEntryCurrency(baseCurrency);
+  const [lastCategoryId, rememberCategory] = useLastCategory(categories.map((c) => c.id));
   const [formError, setFormError] = useState<string | null>(null);
 
   const {
@@ -214,6 +216,15 @@ function AddExpenseDialog({
     },
   });
 
+  // The remembered category arrives from storage after mount, so it is applied
+  // here rather than in defaultValues. Guarded on the field being empty so it
+  // can never overwrite a choice the user has already made in this dialog.
+  useEffect(() => {
+    if (open && lastCategoryId && !watch('categoryId')) {
+      setValue('categoryId', lastCategoryId, { shouldValidate: true });
+    }
+  }, [open, lastCategoryId, setValue, watch]);
+
   const create = useMutation({
     mutationFn: (input: ExpenseInput) => api.post('/expenses', input),
     onSuccess: () => {
@@ -222,7 +233,9 @@ function AddExpenseDialog({
       reset({
         amountMinor: 0,
         currency: entryCurrency,
-        categoryId: '',
+        // Carried over with the currency: someone logging three things at the
+        // till is usually logging three of the same kind of thing.
+        categoryId: lastCategoryId ?? '',
         date: new Date().toISOString().slice(0, 10),
         isRecurring: false,
         tags: [],
@@ -265,13 +278,19 @@ function AddExpenseDialog({
             baseCurrency={baseCurrency}
             locale={locale}
             error={errors.amountMinor ? 'Enter an amount above zero.' : undefined}
+            // The dialog is opened in order to type an amount, so the keypad
+            // should already be up when it appears.
+            autoFocus
           />
 
           <div className="space-y-2">
             <Label htmlFor="category">Category</Label>
             <Select
               value={watch('categoryId')}
-              onValueChange={(value) => setValue('categoryId', value, { shouldValidate: true })}
+              onValueChange={(value) => {
+                setValue('categoryId', value, { shouldValidate: true });
+                rememberCategory(value);
+              }}
             >
               <SelectTrigger id="category">
                 <SelectValue placeholder="Choose a category" />

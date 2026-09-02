@@ -23,7 +23,7 @@ export const metadata: Metadata = {
   description:
     'Track income, expenses, debts and goals. Eco learns your spending patterns and tells you what to do next.',
   applicationName: 'Eco',
-  manifest: '/manifest.webmanifest',
+  manifest: '/manifest.webmanifest',  // served by app/manifest.ts; Next prefixes this with basePath
   appleWebApp: { capable: true, title: 'Eco', statusBarStyle: 'default' },
   // A personal finance dashboard has no business in a search index or a
   // link preview.

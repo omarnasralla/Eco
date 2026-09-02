@@ -1,3 +1,9 @@
+/**
+ * The path prefix the whole app is served under. Declared here rather than
+ * inline so the manifest route can read the same value.
+ */
+const BASE_PATH = '/eco/app';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -11,7 +17,13 @@ const nextConfig = {
   // Changing this invalidates every bookmark, and the bare origin stops
   // serving the app entirely — `/` 404s, which is why the redirect below
   // exists.
-  basePath: '/eco/app',
+  basePath: BASE_PATH,
+
+  // Exposed to the app so anything that must build an absolute path — the web
+  // manifest above all, whose JSON Next does not rewrite — derives it from the
+  // same constant instead of hardcoding a copy that silently rots when the
+  // prefix moves.
+  env: { NEXT_PUBLIC_BASE_PATH: BASE_PATH },
 
   // The workspace packages ship TypeScript-built CommonJS; Next transpiles
   // them alongside app code so a change in @eco/core hot-reloads here.
@@ -28,7 +40,7 @@ const nextConfig = {
   // send them on. `basePath: false` is required — without it Next would
   // prefix the destination and point the redirect at itself.
   async redirects() {
-    return [{ source: '/', destination: '/eco/app', permanent: false, basePath: false }];
+    return [{ source: '/', destination: BASE_PATH, permanent: false, basePath: false }];
   },
 
   async headers() {
