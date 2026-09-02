@@ -11,7 +11,7 @@ fronts both on `:80`, so everything the browser touches is one origin.
 |---|---|---|
 | `/` | — | 302 to `/eco/app` |
 | `/eco/app…` | `127.0.0.1:3000` | Next.js (its `basePath`) |
-| `/api/v1/…` | `127.0.0.1:9000` | NestJS (its own global prefix) |
+| `/eco/api/v1/…` | `127.0.0.1:9000` | NestJS (its own global prefix) |
 | anything else | — | 404 |
 
 Neither upstream rewrites its path: the prefix the browser asks for is the

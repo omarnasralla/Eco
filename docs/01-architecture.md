@@ -75,7 +75,7 @@ arithmetic, that arithmetic belongs in `core` instead.
 
 ## Request lifecycle
 
-A `POST /api/v1/expenses` traverses:
+A `POST /eco/api/v1/expenses` traverses:
 
 1. **`RequestIdMiddleware`** — stamps `X-Request-Id`, echoed in every error body.
 2. **`ThrottlerGuard`** — rate limit, checked before any authentication work so

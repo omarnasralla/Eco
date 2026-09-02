@@ -211,7 +211,7 @@ You do not need this for normal use — it is here for scripting, bulk imports,
 and the operations the UI does not cover yet (editing, deleting, receipts).
 
 In development the interactive Swagger UI at
-`http://localhost:4000/api/v1/docs` is the easiest route: authorise with your
+`http://localhost:9000/eco/api/v1/docs` is the easiest route: authorise with your
 access token, open **income → POST /income**, and *Try it out*. Swagger is
 disabled in production (`main.ts` mounts it only when `isProduction` is false),
 so on a deployed instance use curl or any HTTP client.
@@ -220,13 +220,13 @@ By hand:
 
 ```bash
 # 1. Sign in and keep the access token
-TOKEN=$(curl -s -X POST http://localhost:4000/api/v1/auth/login \
+TOKEN=$(curl -s -X POST http://localhost:9000/eco/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"you@example.com","password":"your-password"}' \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["accessToken"])')
 
 # 2. Create an income source
-curl -X POST http://localhost:4000/api/v1/income \
+curl -X POST http://localhost:9000/eco/api/v1/income \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{

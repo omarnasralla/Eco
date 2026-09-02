@@ -21,7 +21,7 @@ export const envSchema = z
     // port. The default stays 0.0.0.0 because a container needs to accept
     // traffic from outside its own network namespace.
     API_HOST: z.string().min(1).default('0.0.0.0'),
-    API_GLOBAL_PREFIX: z.string().default('api/v1'),
+    API_GLOBAL_PREFIX: z.string().default('eco/api/v1'),
     CORS_ORIGINS: z.string().default('http://localhost:3000'),
     WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
 

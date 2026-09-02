@@ -46,7 +46,7 @@ docker compose exec ollama ollama pull llama3.2:3b   # optional; chat needs it
 | | |
 |---|---|
 | Web | http://localhost:3000 |
-| API + docs | http://localhost:4000/api/v1 · `/docs` |
+| API + docs | http://localhost:9000/eco/api/v1 · `/docs` |
 | AI service | http://localhost:8000/docs |
 | Mail catcher | http://localhost:8025 |
 

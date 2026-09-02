@@ -20,8 +20,8 @@ docker compose exec ollama ollama pull llama3.2:3b
 | Service | URL |
 |---|---|
 | Web | http://localhost:3000 |
-| API | http://localhost:4000/api/v1 |
-| API docs | http://localhost:4000/api/v1/docs |
+| API | http://localhost:9000/eco/api/v1 |
+| API docs | http://localhost:9000/eco/api/v1/docs |
 | AI service | http://localhost:8000/docs |
 | Mail catcher | http://localhost:8025 |
 
@@ -144,7 +144,9 @@ runs against the new schema: expand, deploy, contract in the following release.
   names. Not at debug level either.
 - **Audit log** is append-only in the database; `eco_app` has no `UPDATE` or
   `DELETE` grant on it.
-- **Health probes** at `/api/v1/health/{live,ready}` and `/health/{live,ready}`.
+- **Health probes** at `/eco/api/v1/health/{live,ready}`. There is no
+  unprefixed `/health` route: the global prefix has no exclusions, so a probe
+  configured against `/health/live` gets a 404.
 - **Prometheus annotations** on the API pods.
 - `OTEL_EXPORTER_OTLP_ENDPOINT` and `SENTRY_DSN` are wired in configuration and
   are the intended phase-2 additions.

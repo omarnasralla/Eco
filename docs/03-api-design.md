@@ -1,7 +1,7 @@
 # API design
 
-REST over HTTPS. Base path `/api/v1`. JSON in, JSON out. Interactive
-documentation is served at `/api/v1/docs` (OpenAPI 3, development only).
+REST over HTTPS. Base path `/eco/api/v1`. JSON in, JSON out. Interactive
+documentation is served at `/eco/api/v1/docs` (OpenAPI 3, development only).
 
 **94 routes** across 14 modules.
 
