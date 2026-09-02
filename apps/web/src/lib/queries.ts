@@ -77,7 +77,10 @@ export const fetchers = {
 
   categories: () => api.get<CategoryDto[]>('/categories'),
 
-  income: () => api.get<IncomeSourceDto[]>('/income'),
+  // Inactive and ended sources are listed too: a source you paused or a
+  // contract that finished still has to be findable to be edited or resumed.
+  // The page marks their state rather than hiding them.
+  income: () => api.get<IncomeSourceDto[]>('/income', { query: { includeInactive: 'true' } }),
 
   incomeSummary: () =>
     api.get<{ monthlyTotalMinor: number; currency: string }>('/income/summary'),

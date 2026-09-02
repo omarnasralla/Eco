@@ -83,6 +83,13 @@ export const configuration = (env: Env) => ({
   throttle: {
     ttl: env.THROTTLE_TTL,
     limit: env.THROTTLE_LIMIT,
+    /**
+     * Kept for compatibility with existing .env files. The auth routes set
+     * their own limits with @Throttle (register 5/hour, sign-in 10/minute, and
+     * so on) because those differ per route; a single global number could only
+     * ever act as a ceiling on every other route, which is what it used to do
+     * by accident. See the throttler configuration in app.module.ts.
+     */
     authLimit: env.AUTH_THROTTLE_LIMIT,
   },
 });
