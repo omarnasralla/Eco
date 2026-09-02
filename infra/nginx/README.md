@@ -17,12 +17,25 @@ fronts both on `:80`, so everything the browser touches is one origin.
 Neither upstream rewrites its path: the prefix the browser asks for is the
 prefix the service already routes on.
 
+## Hostnames
+
+Served for `bg.work.gd` and for the bare IP, so a DNS change cannot lock
+anyone out mid-flight. Anything else on :80 hits `eco-default.conf` and gets
+444 — without a `default_server`, nginx hands the first block to any Host
+header at all, including a scanner probing the IP.
+
+Adding a hostname needs **no rebuild**: `NEXT_PUBLIC_API_URL` is relative, so
+the bundle asks whatever host the page was served from. Add the name to
+`server_name` here and to `CORS_ORIGINS` in `.env`, then reload.
+
 ## Install
 
 ```sh
-cp eco.conf       /etc/nginx/sites-available/eco
+cp eco.conf         /etc/nginx/sites-available/eco
+cp eco-default.conf /etc/nginx/sites-available/eco-default
 cp eco-proxy.conf /etc/nginx/snippets/eco-proxy.conf
-ln -sf /etc/nginx/sites-available/eco /etc/nginx/sites-enabled/eco
+ln -sf /etc/nginx/sites-available/eco         /etc/nginx/sites-enabled/eco
+ln -sf /etc/nginx/sites-available/eco-default /etc/nginx/sites-enabled/eco-default
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx && systemctl enable nginx
 ```
