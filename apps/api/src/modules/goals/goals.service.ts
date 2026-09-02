@@ -4,10 +4,10 @@ import type { GoalContributionInput, SavingsGoalDto, SavingsGoalInput } from '@e
 import type { SavingsGoal } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
+import { CurrencyService } from '../currency/currency.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { toNumber, toNumberOrNull } from '../../common/utils/money';
 import { fromIsoDate, requireIsoDate, todayIso, toIsoDate } from '../../common/utils/dates';
-import { CurrencyService } from '../currency/currency.service';
 
 function toDto(goal: SavingsGoal): SavingsGoalDto {
   const projection = projectGoal(
@@ -45,8 +45,8 @@ export class GoalsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
-    private readonly notifications: NotificationsService,
     private readonly currency: CurrencyService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async findAll(userId: string, includeArchived = false): Promise<SavingsGoalDto[]> {
@@ -147,11 +147,35 @@ export class GoalsService {
   /**
    * Adds (or withdraws, with a negative amount) against a goal.
    *
+   * The amount may be entered in any currency; it is converted into the goal's
+   * own currency at the contribution date's rate and frozen on the row, so a
+   * balance built from riyal payments into a dollar goal does not restate
+   * itself every time the rate moves.
+   *
    * Milestone notifications are keyed off `lastMilestoneNotified`, so a balance
    * hovering around 50% cannot spam the user with the same congratulation every
    * time it crosses back and forth.
    */
   async contribute(userId: string, goalId: string, input: GoalContributionInput) {
+    // Read the goal's currency first: conversion hits Redis and possibly the
+    // rate table, and an interactive transaction is the wrong place to wait on
+    // that. The transaction below re-reads the goal, so this is a hint, not the
+    // authority — and the currency of a goal is not something a concurrent
+    // contribution changes.
+    const target = await this.prisma.savingsGoal.findFirst({
+      where: { id: goalId, userId, deletedAt: null },
+      select: { currency: true },
+    });
+    if (!target) throw new NotFoundException('Savings goal not found');
+
+    const enteredCurrency = input.currency ?? target.currency;
+    const goalAmountMinor = await this.currency.convert(
+      input.amountMinor,
+      enteredCurrency,
+      target.currency,
+      input.date,
+    );
+
     const result = await this.prisma.$transaction(async (tx) => {
       const goal = await tx.savingsGoal.findFirst({
         where: { id: goalId, userId, deletedAt: null },
@@ -163,7 +187,7 @@ export class GoalsService {
 
       const previous = toNumber(goal.currentAmountMinor);
       const target = toNumber(goal.targetAmountMinor);
-      const updated = Math.max(previous + input.amountMinor, 0);
+      const updated = Math.max(previous + goalAmountMinor, 0);
       const achieved = updated >= target;
 
       await tx.goalContribution.create({
@@ -171,6 +195,8 @@ export class GoalsService {
           userId,
           goalId,
           amountMinor: BigInt(input.amountMinor),
+          currency: enteredCurrency,
+          goalAmountMinor: BigInt(goalAmountMinor),
           date: fromIsoDate(input.date),
           notes: input.notes ?? null,
         },
@@ -227,16 +253,26 @@ export class GoalsService {
     return contributions.map((c) => ({
       id: c.id,
       amountMinor: toNumber(c.amountMinor),
+      currency: c.currency,
+      goalAmountMinor: toNumber(c.goalAmountMinor),
       date: requireIsoDate(c.date),
       notes: c.notes,
     }));
   }
 
-  /** Total saved across active goals, in the user's base currency. */
   /**
-   * Total saved across active goals, in the user's base currency. Converted per
-   * goal rather than SQL-summed: goals may be held in different currencies, and
-   * adding those figures raw produces a number in no currency at all.
+   * Total saved across active goals, in the user's base currency.
+   *
+   * Goals each carry their own currency, so this cannot be a SUM: adding a
+   * riyal balance to a dollar one produces a number that is not money in any
+   * currency. Conversion is per goal at today's rate — unlike a transaction,
+   * a savings balance is a present-day holding, so today's rate is the honest
+   * one. A user has a handful of goals, so the loop is cheap, and same-currency
+   * goals short-circuit before any rate is consulted.
+   *
+   * Lenient conversion, deliberately: this is a read-only summary figure, and
+   * one goal in an unquoted currency should degrade its own contribution
+   * rather than fail the caller's whole dashboard.
    */
   async totalSaved(userId: string, userCurrency: string): Promise<number> {
     const goals = await this.prisma.savingsGoal.findMany({

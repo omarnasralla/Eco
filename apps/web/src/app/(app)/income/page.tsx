@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2, Plus } from 'lucide-react';
@@ -10,13 +10,14 @@ import {
   FREQUENCIES,
   INCOME_TYPES,
   INCOME_TYPE_LABELS,
+  convertMinor,
   formatMoney,
   incomeSourceSchema,
-  toMinorUnits,
   type IncomeSourceInput,
 } from '@eco/shared';
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
+import { useEntryCurrency } from '@/lib/entry-currency';
 import { useMoneyFormat } from '@/lib/auth-provider';
 import { formatDate } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/page-header';
@@ -33,6 +34,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { MoneyField, useExchangeRates } from '@/components/ui/money-field';
 import {
   Select,
   SelectContent,
@@ -61,6 +63,23 @@ function IncomeContent() {
 
   const income = useQuery({ queryKey: queryKeys.income, queryFn: fetchers.income });
   const summary = useQuery({ queryKey: queryKeys.incomeSummary, queryFn: fetchers.incomeSummary });
+  const rates = useExchangeRates();
+
+  /**
+   * A source is denominated in its own currency, so it is shown in that one.
+   * The run-rate contribution is what belongs in the base currency, and the API
+   * has already converted the headline total; this converts the per-row figure
+   * to match it.
+   */
+  const monthlyInBase = (minor: number, from: string): number | null => {
+    if (from === currency) return minor;
+    if (!rates.data) return null;
+    try {
+      return convertMinor(minor, from, currency, rates.data.rates);
+    } catch {
+      return null;
+    }
+  };
 
   const isEmpty = !income.isLoading && (income.data?.length ?? 0) === 0;
 
@@ -132,18 +151,36 @@ function IncomeContent() {
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
-                    {/* A source is a schedule, not a settled transaction, so
-                        there is no frozen converted figure to show — render it
-                        in the currency it is actually paid in rather than
-                        relabelling the same number with the base symbol. */}
+                    {/* Shown in the source's own currency: a riyal salary under
+                        a dollar sign is a different, wrong number. */}
                     <p className="tabular text-sm font-semibold">
                       {formatMoney(source.amountMinor, source.currency, { locale })}
                     </p>
-                    {source.frequency !== 'MONTHLY' && source.frequency !== 'ONE_TIME' ? (
-                      <p className="tabular text-xs text-muted-foreground">
-                        {money(source.monthlyEquivalentMinor)}/mo
-                      </p>
-                    ) : null}
+                    {(() => {
+                      // The monthly line earns its place when the frequency
+                      // needs annualising, when the currency needs converting,
+                      // or both.
+                      if (source.frequency === 'ONE_TIME') return null;
+                      const differs = source.currency !== currency;
+                      if (source.frequency === 'MONTHLY' && !differs) return null;
+                      const base = monthlyInBase(source.monthlyEquivalentMinor, source.currency);
+                      if (base === null) {
+                        return (
+                          <p className="tabular text-xs text-muted-foreground">
+                            {formatMoney(source.monthlyEquivalentMinor, source.currency, {
+                              locale,
+                            })}
+                            /mo
+                          </p>
+                        );
+                      }
+                      return (
+                        <p className="tabular text-xs text-muted-foreground">
+                          {differs ? '≈ ' : ''}
+                          {money(base)}/mo
+                        </p>
+                      );
+                    })()}
                   </div>
                   {!source.isActive ? <Badge variant="secondary">inactive</Badge> : null}
                 </li>
@@ -156,7 +193,8 @@ function IncomeContent() {
       <AddIncomeDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        currency={currency}
+        baseCurrency={currency}
+        locale={locale}
         onCreated={() => {
           // Income moves the savings rate, the budget headroom, the payoff
           // plans and the health score — invalidate the lot, not just this list.
@@ -170,15 +208,19 @@ function IncomeContent() {
 function AddIncomeDialog({
   open,
   onOpenChange,
-  currency,
+  baseCurrency,
+  locale,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  currency: string;
+  /** What the run rate is reported in; pay may arrive in another currency. */
+  baseCurrency: string;
+  locale: string;
   onCreated: () => void;
 }) {
   const [amount, setAmount] = useState('');
+  const [entryCurrency, setEntryCurrency] = useEntryCurrency(baseCurrency);
   const [formError, setFormError] = useState<string | null>(null);
 
   const {
@@ -194,7 +236,7 @@ function AddIncomeDialog({
       name: '',
       type: 'SALARY',
       amountMinor: 0,
-      currency,
+      currency: baseCurrency,
       frequency: 'MONTHLY',
       startDate: new Date().toISOString().slice(0, 10),
       isActive: true,
@@ -204,7 +246,17 @@ function AddIncomeDialog({
   const create = useMutation({
     mutationFn: (input: IncomeSourceInput) => api.post('/income', input),
     onSuccess: () => {
-      reset();
+      // Keep the currency they just used; a second stream is usually paid in
+      // the same one.
+      reset({
+        name: '',
+        type: 'SALARY',
+        amountMinor: 0,
+        currency: entryCurrency,
+        frequency: 'MONTHLY',
+        startDate: new Date().toISOString().slice(0, 10),
+        isActive: true,
+      });
       setAmount('');
       onOpenChange(false);
       onCreated();
@@ -215,7 +267,10 @@ function AddIncomeDialog({
 
   const onSubmit = handleSubmit((values) => {
     setFormError(null);
-    create.mutate(values);
+    // The currency lives in component state rather than the form, so the two
+    // are joined here. `useEntryCurrency` only ever yields a supported code,
+    // which is what the schema's `currency` field accepts.
+    create.mutate({ ...values, currency: entryCurrency });
   });
 
   return (
@@ -237,34 +292,21 @@ function AddIncomeDialog({
             ) : null}
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="income-amount">Amount</Label>
-            <Input
-              id="income-amount"
-              // A decimal keypad on mobile, and the value is converted to minor
-              // units before it leaves the form — floats never touch a balance.
-              inputMode="decimal"
-              placeholder="0.00"
-              value={amount}
-              onChange={(event) => {
-                const raw = event.target.value;
-                setAmount(raw);
-                const parsed = Number(raw);
-                setValue(
-                  'amountMinor',
-                  Number.isFinite(parsed) && parsed > 0 ? toMinorUnits(parsed, currency) : 0,
-                  { shouldValidate: true },
-                );
-              }}
-            />
-            <p className="text-xs text-muted-foreground">
-              What actually lands in your account — take-home pay, not gross. Nothing is deducted
-              from this figure.
-            </p>
-            {errors.amountMinor ? (
-              <p className="text-sm text-destructive">Enter an amount above zero.</p>
-            ) : null}
-          </div>
+          <MoneyField
+            id="income-amount"
+            label="Amount"
+            amount={amount}
+            onAmountChange={(raw, minorUnits) => {
+              setAmount(raw);
+              setValue('amountMinor', minorUnits, { shouldValidate: true });
+            }}
+            currency={entryCurrency}
+            onCurrencyChange={setEntryCurrency}
+            baseCurrency={baseCurrency}
+            locale={locale}
+            hint="What actually lands in your account — take-home pay, not gross. Nothing is deducted from this figure."
+            error={errors.amountMinor ? 'Enter an amount above zero.' : undefined}
+          />
 
           <div className="space-y-2">
             <Label htmlFor="income-frequency">How often</Label>

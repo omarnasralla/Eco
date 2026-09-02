@@ -40,6 +40,7 @@ export const queryKeys = {
   debts: ['debts'] as const,
   debtComparison: (budget: number) => ['debts', 'compare', budget] as const,
   goals: ['goals'] as const,
+  goalContributions: (id: string) => ['goals', id, 'contributions'] as const,
   budget: (month: string) => ['budgets', month] as const,
   forecast: (horizon: number) => ['ai', 'forecast', horizon] as const,
   patterns: ['ai', 'patterns'] as const,
@@ -90,6 +91,9 @@ export const fetchers = {
 
   goals: () => api.get<SavingsGoalDto[]>('/goals'),
 
+  goalContributions: (goalId: string) =>
+    api.get<GoalContributionRow[]>(`/goals/${goalId}/contributions`),
+
   // React Query rejects `undefined` as query data, so an absent budget is
   // normalised to an explicit null the UI can render an empty state from.
   budget: (month: string) =>
@@ -113,6 +117,16 @@ export const fetchers = {
 };
 
 /* ── Response shapes the API composes rather than importing wholesale ─── */
+
+/** One payment into (or out of) a goal, as entered and as converted. */
+export interface GoalContributionRow {
+  id: string;
+  amountMinor: number;
+  currency: string;
+  goalAmountMinor: number;
+  date: string;
+  notes: string | null;
+}
 
 export interface DebtStrategySummary {
   strategy: 'SNOWBALL' | 'AVALANCHE' | 'CUSTOM';
