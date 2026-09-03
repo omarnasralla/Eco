@@ -56,6 +56,26 @@ nginx -t && systemctl reload nginx && systemctl enable nginx
 
 ## Not done here
 
-TLS. This serves plain HTTP; the login page posts a password over it. A
-certificate needs a domain pointed at this host, after which certbot or Caddy
-would terminate TLS in front of this config.
+TLS. This serves plain HTTP; the login page posts a password over it.
+
+`WEB_ORIGIN` is set to `https://bg.work.gd/eco/app`, so every link this
+deployment emails or hands to an administrator already carries that address.
+Two things have to be true before those links resolve, and neither can be done
+from this machine alone:
+
+1. **DNS.** `bg.work.gd` currently resolves to `81.208.190.196`; this host is
+   `169.58.227.114`. The A record has to point here. `server_name` already
+   lists the domain, so plain HTTP works the moment it does.
+2. **A certificate.** With DNS pointing here:
+
+   ```
+   apt-get install -y certbot python3-certbot-nginx
+   certbot --nginx -d bg.work.gd
+   ```
+
+   certbot adds the 443 server block and the redirect to this config, and
+   installs a renewal timer. Until then the URLs are correct and unreachable —
+   a deliberate trade, made so nothing has to be rewritten later.
+
+Until DNS is repointed, an administrator issuing a password reset should expect
+the link not to open, and reset links cannot be handed to anyone.

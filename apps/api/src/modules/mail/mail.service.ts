@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
@@ -14,7 +14,7 @@ import type { Transporter } from 'nodemailer';
  * real is ever sent while testing.
  */
 @Injectable()
-export class MailService {
+export class MailService implements OnModuleInit {
   private readonly logger = new Logger(MailService.name);
   private readonly transporter: Transporter;
   private readonly from: string;
@@ -33,6 +33,33 @@ export class MailService {
       secure: config.getOrThrow<boolean>('mail.secure'),
       ...(user && pass ? { auth: { user, pass } } : {}),
     });
+  }
+
+  /**
+   * Says at startup whether mail can actually be sent.
+   *
+   * The transport is only contacted when something is sent, so a misconfigured
+   * or absent relay stayed invisible until someone asked for a password reset
+   * and quietly received nothing. This deployment ran that way for its whole
+   * life. One probe at boot turns that into a line in the log.
+   *
+   * Deliberately not fatal: an API that refuses to start because email is down
+   * takes every other feature with it, and email is not on the critical path
+   * for anything but account recovery.
+   */
+  async onModuleInit(): Promise<void> {
+    const host = this.config.getOrThrow<string>('mail.host');
+    const port = this.config.getOrThrow<number>('mail.port');
+    try {
+      await this.transporter.verify();
+      this.logger.log(`Mail transport ready at ${host}:${port}`);
+    } catch (error) {
+      this.logger.warn(
+        `Mail transport ${host}:${port} is not usable (${(error as Error).message}). ` +
+          'Verification and password-reset emails will not be delivered; ' +
+          'an administrator issuing a reset link will have to pass it on by hand.',
+      );
+    }
   }
 
   /**

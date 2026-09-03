@@ -10,6 +10,21 @@ import { z } from 'zod';
  */
 const nonDefault = (placeholder: string) => (v: string) => !v.startsWith(placeholder.slice(0, 10));
 
+/**
+ * A boolean from an environment variable, which is always a string.
+ *
+ * Not `z.coerce.boolean()`: that is `Boolean(value)`, and every non-empty
+ * string is truthy — so `SMTP_SECURE=false` parsed as **true**. That put the
+ * mail transport into implicit-TLS mode on port 587 and every send died in the
+ * TLS handshake, which is not a failure anyone would trace back to the word
+ * "false" in a config file.
+ */
+const envBoolean = (fallback: boolean) =>
+  z
+    .enum(['true', 'false', '1', '0', 'yes', 'no', ''])
+    .default(fallback ? 'true' : 'false')
+    .transform((v) => (v === '' ? fallback : v === 'true' || v === '1' || v === 'yes'));
+
 export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -70,7 +85,7 @@ export const envSchema = z
     SMTP_PORT: z.coerce.number().int().default(1025),
     SMTP_USER: z.string().optional(),
     SMTP_PASSWORD: z.string().optional(),
-    SMTP_SECURE: z.coerce.boolean().default(false),
+    SMTP_SECURE: envBoolean(false),
     MAIL_FROM: z.string().default('Eco <no-reply@eco.app>'),
 
     TOTP_ISSUER: z.string().default('Eco'),
