@@ -85,6 +85,8 @@ export interface IncomeSourceDto {
   endDate: string | null;
   isActive: boolean;
   notes: string | null;
+  /** Receipts land here whenever they do not name their own account. */
+  accountId: string | null;
   /** Derived: amountMinor normalised to a monthly figure. */
   monthlyEquivalentMinor: number;
   createdAt: string;

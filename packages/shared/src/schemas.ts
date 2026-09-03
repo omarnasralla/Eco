@@ -154,6 +154,8 @@ export const incomeSourceSchema = z
     startDate: isoDate,
     endDate: isoDate.nullish(),
     isActive: z.boolean().default(true),
+    /** Receipts land in this account whenever they do not name their own. */
+    accountId: uuid.nullish(),
     notes: z.string().trim().max(2000).nullish(),
   })
   .refine((v) => !v.endDate || v.endDate >= v.startDate, {
@@ -452,7 +454,8 @@ export type UpdateAccountInput = z.infer<typeof updateAccountSchema>;
 export const incomeReceiptSchema = z.object({
   amountMinor: positiveMinorAmount,
   date: isoDate,
-  /** Where the money landed. Null moves no balance. */
+  /** Where the money landed. Omitted against a source, it falls back to that
+   *  source's own account; an explicit null moves no balance. */
   accountId: uuid.nullish(),
   notes: z.string().trim().max(500).nullish(),
 });

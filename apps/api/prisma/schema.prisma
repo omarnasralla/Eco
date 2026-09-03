@@ -333,6 +333,7 @@ model FinancialAccount {
 
   user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   expenses      Expense[]
+  incomeSources IncomeSource[]
   receipts      IncomeReceipt[]
   contributions GoalContribution[]
   debts         Debt[]
@@ -374,15 +375,21 @@ model IncomeSource {
   endDate     DateTime?  @db.Date
   isActive    Boolean    @default(true)
   notes       String?    @db.Text
+  /// Where this income lands by default. A source has a frequency, so it is a
+  /// recurring arrival by construction — naming the account once is what makes
+  /// recording a receipt a single click rather than a re-pick every payday.
+  accountId   String?    @db.Uuid
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   deletedAt   DateTime?
 
-  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
   receipts IncomeReceipt[]
 
   @@index([userId, isActive, deletedAt])
   @@index([userId, startDate])
+  @@index([accountId])
   @@map("income_sources")
 }
 

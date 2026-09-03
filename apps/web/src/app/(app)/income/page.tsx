@@ -179,6 +179,9 @@ function IncomeContent() {
             <ul className="divide-y">
               {income.data!.map((source) => {
                 const state = runRateState(source);
+                // Named on the row so the link is visible without opening the
+                // editor: a payment recorded here moves this account.
+                const account = accounts.data?.find((a) => a.id === source.accountId) ?? null;
                 return (
                   <li key={source.id}>
                     {/* The whole row opens the editor: pay changes, and hunting
@@ -205,6 +208,7 @@ function IncomeContent() {
                           {source.endDate
                             ? `${formatDate(source.startDate, locale)} to ${formatDate(source.endDate, locale)}`
                             : `since ${formatDate(source.startDate, locale)}`}
+                          {account ? ` · into ${account.name}` : ''}
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
@@ -343,6 +347,7 @@ function IncomeContent() {
       />
 
       <IncomeDialog
+        accounts={accounts.data ?? []}
         open={addOpen}
         onOpenChange={setAddOpen}
         baseCurrency={currency}
@@ -352,6 +357,7 @@ function IncomeContent() {
 
       <IncomeDialog
         source={editing ?? undefined}
+        accounts={accounts.data ?? []}
         open={editing !== null}
         onOpenChange={(next) => (next ? undefined : setEditing(null))}
         baseCurrency={currency}
@@ -371,6 +377,7 @@ function IncomeContent() {
  */
 function IncomeDialog({
   source,
+  accounts,
   open,
   onOpenChange,
   baseCurrency,
@@ -378,6 +385,7 @@ function IncomeDialog({
   onSaved,
 }: {
   source?: IncomeSourceDto;
+  accounts: AccountDto[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** What the run rate is reported in; pay may arrive in another currency. */
@@ -388,6 +396,10 @@ function IncomeDialog({
   const editing = source !== undefined;
 
   const [amount, setAmount] = useState('');
+  // Held outside react-hook-form, like the currency below: Radix's Select
+  // emits an empty value while its items register on mount, and no item here
+  // has one, so routing it through the form would clear a real choice.
+  const [accountId, setAccountId] = useState<string | null>(null);
   const [rememberedCurrency, rememberCurrency] = useEntryCurrency(baseCurrency);
   const [currency, setCurrency] = useState(baseCurrency);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -427,6 +439,7 @@ function IncomeDialog({
 
     if (source) {
       setCurrency(source.currency);
+      setAccountId(source.accountId);
       setAmount(String(toMajorUnits(source.amountMinor, source.currency)));
       reset({
         name: source.name,
@@ -443,6 +456,7 @@ function IncomeDialog({
     }
 
     setCurrency(rememberedCurrency);
+    setAccountId(null);
     setAmount('');
     reset({
       name: '',
@@ -482,7 +496,7 @@ function IncomeDialog({
     // are joined here. Only a new entry updates the remembered choice: editing
     // an old riyal salary should not change what the next expense defaults to.
     if (!editing) rememberCurrency(currency);
-    save.mutate({ ...values, currency });
+    save.mutate({ ...values, currency, accountId });
   });
 
   const pending = save.isPending || remove.isPending;
@@ -625,6 +639,14 @@ function IncomeDialog({
             </div>
           ) : null}
 
+          <AccountPicker
+            id="income-account"
+            accounts={accounts}
+            value={accountId}
+            onChange={setAccountId}
+            hint="Recording a payment from this source lands it in this account by default, raising its balance the way an expense lowers it. The schedule itself moves nothing until a payment is recorded."
+          />
+
           <div className="space-y-2">
             <Label htmlFor="income-notes">Notes (optional)</Label>
             <Input
@@ -708,20 +730,25 @@ export default function IncomePage() {
   );
 }
 
-/** Shared by both receipt dialogs: where the money landed. */
+/** Shared by the source form and both receipt dialogs: where the money lands. */
 function AccountPicker({
   accounts,
   value,
   onChange,
+  id = 'receipt-account',
+  hint,
 }: {
   accounts: AccountDto[];
   value: string | null | undefined;
   onChange: (next: string | null) => void;
+  /** Distinct per form: two pickers on one page cannot share a label's `for`. */
+  id?: string;
+  hint?: string;
 }) {
   if (accounts.length === 0) return null;
   return (
     <div className="space-y-2">
-      <Label htmlFor="receipt-account">Paid into</Label>
+      <Label htmlFor={id}>Paid into</Label>
       <Select
         value={value ?? 'none'}
         onValueChange={(v) => {
@@ -730,7 +757,7 @@ function AccountPicker({
           onChange(v === 'none' ? null : v);
         }}
       >
-        <SelectTrigger id="receipt-account">
+        <SelectTrigger id={id}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -742,6 +769,7 @@ function AccountPicker({
           <SelectItem value="none">Not into a tracked account</SelectItem>
         </SelectContent>
       </Select>
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
@@ -773,6 +801,11 @@ function ReceiptDialog({
     setDate(today());
     // Prefilled with the scheduled figure, which is what most payments are.
     setAmount(String(toMajorUnits(source.amountMinor, source.currency)));
+    // The source's own account is the point of setting one — a monthly payday
+    // should need no re-picking, only an override on the months it differs.
+    // Left undefined when there is nothing to fall back to yet, so the effect
+    // below still fills in the primary once the accounts finish loading.
+    setAccountId(source.accountId ?? primaryId ?? undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source?.id]);
 

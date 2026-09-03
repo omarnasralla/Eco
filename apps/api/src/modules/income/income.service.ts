@@ -61,6 +61,7 @@ function toDto(source: IncomeSource): IncomeSourceDto {
     endDate: toIsoDate(source.endDate),
     isActive: source.isActive,
     notes: source.notes,
+    accountId: source.accountId,
     // Derived in @eco/core so web, API and React Native all agree on what a
     // weekly wage is worth per month.
     monthlyEquivalentMinor: toMonthlyMinor(amountMinor, source.frequency),
@@ -94,6 +95,8 @@ export class IncomeService {
   }
 
   async create(userId: string, input: IncomeSourceInput): Promise<IncomeSourceDto> {
+    if (input.accountId) await this.requireOwnedAccount(userId, input.accountId);
+
     const source = await this.prisma.incomeSource.create({
       data: {
         userId,
@@ -105,6 +108,7 @@ export class IncomeService {
         startDate: fromIsoDate(input.startDate),
         endDate: input.endDate ? fromIsoDate(input.endDate) : null,
         isActive: input.isActive,
+        accountId: input.accountId ?? null,
         notes: input.notes ?? null,
       },
     });
@@ -121,6 +125,8 @@ export class IncomeService {
       where: { id, userId, deletedAt: null },
     });
     if (!existing) throw new NotFoundException('Income source not found');
+
+    if (input.accountId) await this.requireOwnedAccount(userId, input.accountId);
 
     // `updateIncomeSourceSchema` is `incomeSourceSchema.innerType().partial()`,
     // and `innerType()` drops the refine that keeps the end date on or after
@@ -152,6 +158,7 @@ export class IncomeService {
           ? { endDate: input.endDate ? fromIsoDate(input.endDate) : null }
           : {}),
         ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+        ...(input.accountId !== undefined ? { accountId: input.accountId } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
       },
     });
@@ -181,18 +188,19 @@ export class IncomeService {
     });
     if (!source) throw new NotFoundException('Income source not found');
 
-    if (input.accountId) {
-      const owned = await this.prisma.financialAccount.count({
-        where: { id: input.accountId, userId, deletedAt: null },
-      });
-      if (owned === 0) throw new NotFoundException('Account not found');
-    }
+    if (input.accountId) await this.requireOwnedAccount(userId, input.accountId);
+
+    // Explicit input wins; otherwise fall back to the source's own account —
+    // set once, a recurring payday needs no re-picking every month. An
+    // explicit null still means "not into a tracked account", for the month
+    // the money arrived somewhere else.
+    const accountId = input.accountId !== undefined ? input.accountId : source.accountId;
 
     const receipt = await this.prisma.incomeReceipt.create({
       data: {
         userId,
         incomeSourceId,
-        accountId: input.accountId ?? null,
+        accountId,
         amountMinor: BigInt(input.amountMinor),
         currency: source.currency,
         baseAmountMinor: BigInt(
@@ -225,12 +233,7 @@ export class IncomeService {
     input: StandaloneReceiptInput,
     userCurrency: string,
   ): Promise<IncomeReceiptDto> {
-    if (input.accountId) {
-      const owned = await this.prisma.financialAccount.count({
-        where: { id: input.accountId, userId, deletedAt: null },
-      });
-      if (owned === 0) throw new NotFoundException('Account not found');
-    }
+    if (input.accountId) await this.requireOwnedAccount(userId, input.accountId);
 
     const receipt = await this.prisma.incomeReceipt.create({
       data: {
@@ -269,6 +272,13 @@ export class IncomeService {
     const { count } = await this.prisma.incomeReceipt.deleteMany({ where: { id, userId } });
     if (count === 0) throw new NotFoundException('Receipt not found');
     await this.redis.invalidateUser(userId);
+  }
+
+  private async requireOwnedAccount(userId: string, accountId: string): Promise<void> {
+    const owned = await this.prisma.financialAccount.count({
+      where: { id: accountId, userId, deletedAt: null },
+    });
+    if (owned === 0) throw new NotFoundException('Account not found');
   }
 
   /**
