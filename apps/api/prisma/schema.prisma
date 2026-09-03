@@ -335,6 +335,8 @@ model FinancialAccount {
   expenses      Expense[]
   receipts      IncomeReceipt[]
   contributions GoalContribution[]
+  debts         Debt[]
+  debtPayments  DebtPayment[]
 
   @@index([userId, deletedAt])
   @@unique([providerId, externalId])
@@ -513,6 +515,12 @@ model Debt {
   currency            String   @db.Char(3)
   dueDayOfMonth       Int      @db.SmallInt
   openedDate          DateTime? @db.Date
+  /// The account an installment is paid from by default. A debt is a
+  /// recurring obligation, unlike a one-off expense, so remembering this once
+  /// is what makes "record payment" a single click every month instead of a
+  /// re-pick — recordPayment falls back to it whenever a payment does not
+  /// specify its own account.
+  accountId           String?  @db.Uuid
   isClosed            Boolean  @default(false)
   closedAt            DateTime?
   notes               String?  @db.Text
@@ -521,11 +529,13 @@ model Debt {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
   payments DebtPayment[]
 
   @@index([userId, isClosed, deletedAt])
   @@index([userId, dueDayOfMonth])
+  @@index([accountId])
   @@map("debts")
 }
 
@@ -533,6 +543,9 @@ model DebtPayment {
   id             String   @id @default(uuid()) @db.Uuid
   userId         String   @db.Uuid
   debtId         String   @db.Uuid
+  /// Null when the payment was not tied to a tracked account — the money left
+  /// somewhere, but nowhere this app knows to subtract it from.
+  accountId      String?  @db.Uuid
   amountMinor    BigInt
   /// The split is recorded, not recomputed — a lender's actual allocation can
   /// differ from our model, and the ledger should reflect what happened.
@@ -546,10 +559,12 @@ model DebtPayment {
   notes          String?  @db.Text
   createdAt      DateTime @default(now())
 
-  debt Debt @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  debt    Debt              @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  account FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
   @@index([userId, date])
   @@index([debtId, date(sort: Desc)])
+  @@index([accountId, date])
   @@map("debt_payments")
 }
 

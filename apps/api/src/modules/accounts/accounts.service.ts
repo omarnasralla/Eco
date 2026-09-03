@@ -80,7 +80,7 @@ export class AccountsService {
   ): Promise<{ net: number; count: number }> {
     const since = account.openingBalanceDate;
 
-    const [spent, received, contributed] = await Promise.all([
+    const [spent, received, contributed, repaid] = await Promise.all([
       this.prisma.expense.groupBy({
         by: ['currency'],
         where: { accountId: account.id, deletedAt: null, date: { gte: since } },
@@ -105,6 +105,16 @@ export class AccountsService {
         _sum: { amountMinor: true },
         _count: { _all: true },
       }),
+      // A debt payment moves money out the same way an expense does. The full
+      // amount paid, not just the principal portion — both principal and
+      // interest left this account, and the split between them is a fact about
+      // the debt, not about how much cash you no longer have.
+      this.prisma.debtPayment.groupBy({
+        by: ['currency'],
+        where: { accountId: account.id, date: { gte: since } },
+        _sum: { amountMinor: true },
+        _count: { _all: true },
+      }),
     ]);
 
     let net = 0;
@@ -113,6 +123,7 @@ export class AccountsService {
       [spent, -1],
       [received, 1],
       [contributed, -1],
+      [repaid, -1],
     ] as const) {
       for (const row of rows) {
         count += row._count._all;

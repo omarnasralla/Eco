@@ -451,6 +451,12 @@ function DebtDialog({
   const [debtCurrency, setDebtCurrency] = useEntryCurrency(baseCurrency);
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Held in local state rather than react-hook-form: Radix's Select emits an
+  // empty value while its items register on mount, and no item here has an
+  // empty value, so that phantom event would otherwise clear a real choice.
+  const [accountId, setAccountId] = useState<string | null | undefined>(undefined);
+
+  const accounts = useQuery({ queryKey: queryKeys.accounts, queryFn: fetchers.accounts });
 
   const {
     register,
@@ -477,6 +483,7 @@ function DebtDialog({
     if (!open) return;
     setFormError(null);
     setConfirmingDelete(false);
+    setAccountId(debt ? debt.accountId : null);
     if (debt) {
       setBalance(String(toMajorUnits(debt.currentBalanceMinor, debt.currency)));
       setPrincipal(String(toMajorUnits(debt.principalMinor, debt.currency)));
@@ -500,7 +507,9 @@ function DebtDialog({
 
   const save = useMutation({
     mutationFn: (input: DebtInput) =>
-      editing ? api.patch(`/debts/${debt.id}`, input) : api.post('/debts', input),
+      editing
+        ? api.patch(`/debts/${debt.id}`, { ...input, accountId: accountId ?? null })
+        : api.post('/debts', { ...input, accountId: accountId ?? null }),
     onSuccess: () => {
       onOpenChange(false);
       onSaved();
@@ -644,6 +653,38 @@ function DebtDialog({
             <Input id="debt-lender" placeholder="Barclays" {...register('lender')} />
           </div>
 
+          {accounts.data && accounts.data.length > 0 ? (
+            <div className="space-y-2">
+              <Label htmlFor="debt-account">Pay from</Label>
+              <Select
+                value={accountId ?? 'none'}
+                onValueChange={(v) => {
+                  // See the state comment above — Radix fires this with an
+                  // empty string during item registration; no real item has
+                  // one, so it is never an actual choice.
+                  if (!v) return;
+                  setAccountId(v === 'none' ? null : v);
+                }}
+              >
+                <SelectTrigger id="debt-account">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.data.map((account) => (
+                    <SelectItem key={account.id} value={account.id}>
+                      {account.name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="none">Not tracked here</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Recording a payment on this debt uses this account by default, and reduces its
+                balance the same way an expense would.
+              </p>
+            </div>
+          ) : null}
+
           {formError ? (
             <p role="alert" className="text-sm text-destructive">
               {formError}
@@ -729,6 +770,13 @@ function PaymentDialog({
 }) {
   const [amount, setAmount] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  // Local state for the same Radix-empty-value reason as the account picker
+  // on the add/edit form. Starts at the debt's own default account, which is
+  // the entire point of setting one — a recurring installment should not
+  // need re-picking every month, only overriding on the months it differs.
+  const [accountId, setAccountId] = useState<string | null | undefined>(undefined);
+
+  const accounts = useQuery({ queryKey: queryKeys.accounts, queryFn: fetchers.accounts });
 
   const {
     register,
@@ -744,6 +792,7 @@ function PaymentDialog({
     if (!debt) return;
     setFormError(null);
     setAmount('');
+    setAccountId(debt.accountId);
     // Prefilled with the minimum, which is what most payments are, and still
     // entirely editable.
     const minimum = toMajorUnits(debt.minimumPaymentMinor, debt.currency);
@@ -755,7 +804,8 @@ function PaymentDialog({
   }, [debt?.id]);
 
   const pay = useMutation({
-    mutationFn: (input: DebtPaymentInput) => api.post(`/debts/${debt!.id}/payments`, input),
+    mutationFn: (input: DebtPaymentInput) =>
+      api.post(`/debts/${debt!.id}/payments`, { ...input, accountId: accountId ?? null }),
     onSuccess: () => {
       onClose();
       onSaved();
@@ -815,6 +865,31 @@ function PaymentDialog({
             <Label htmlFor="payment-date">Date</Label>
             <Input id="payment-date" type="date" {...register('date')} />
           </div>
+
+          {accounts.data && accounts.data.length > 0 ? (
+            <div className="space-y-2">
+              <Label htmlFor="payment-account">From</Label>
+              <Select
+                value={accountId ?? 'none'}
+                onValueChange={(v) => {
+                  if (!v) return;
+                  setAccountId(v === 'none' ? null : v);
+                }}
+              >
+                <SelectTrigger id="payment-account">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.data.map((account) => (
+                    <SelectItem key={account.id} value={account.id}>
+                      {account.name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="none">Not tracked here</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
 
           {formError ? (
             <p role="alert" className="text-sm text-destructive">

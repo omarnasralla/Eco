@@ -135,6 +135,8 @@ export interface DebtDto {
   currency: string;
   dueDayOfMonth: number;
   nextDueDate: string;
+  /** Paid from this account whenever a payment does not name its own. */
+  accountId: string | null;
   isClosed: boolean;
   notes: string | null;
   /** Months to clear at the minimum payment; null if it never amortises. */

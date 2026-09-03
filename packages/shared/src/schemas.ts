@@ -227,6 +227,8 @@ export const debtSchema = z.object({
   /** Day of month the payment is due, 1–31. */
   dueDayOfMonth: z.number().int().min(1).max(31),
   openedDate: isoDate.nullish(),
+  /** Paid from this account whenever a payment does not name its own. */
+  accountId: uuid.nullish(),
   notes: z.string().trim().max(2000).nullish(),
 });
 
@@ -240,6 +242,10 @@ export const debtPaymentSchema = z.object({
   /** Optional split; when omitted the server derives it from the APR. */
   principalMinor: minorAmount.optional(),
   interestMinor: minorAmount.optional(),
+  /** Which account the payment came out of. Omitted, it reduces the debt
+   *  without reducing any account's cash — net worth overstates by the
+   *  payment amount until this is set. */
+  accountId: uuid.nullish(),
   notes: z.string().trim().max(500).nullish(),
 });
 

@@ -47,6 +47,7 @@ function toDto(debt: Debt): DebtDto {
     currency: debt.currency,
     dueDayOfMonth: debt.dueDayOfMonth,
     nextDueDate: nextDueDate(todayIso(), debt.dueDayOfMonth),
+    accountId: debt.accountId,
     isClosed: debt.isClosed,
     notes: debt.notes,
     // Null when the minimum payment does not even cover the interest — the
@@ -79,6 +80,8 @@ export class DebtsService {
   }
 
   async create(userId: string, input: DebtInput): Promise<DebtDto> {
+    if (input.accountId) await this.requireOwnedAccount(userId, input.accountId);
+
     const debt = await this.prisma.debt.create({
       data: {
         userId,
@@ -92,6 +95,7 @@ export class DebtsService {
         currency: input.currency,
         dueDayOfMonth: input.dueDayOfMonth,
         openedDate: input.openedDate ? fromIsoDate(input.openedDate) : null,
+        accountId: input.accountId ?? null,
         notes: input.notes ?? null,
       },
     });
@@ -106,6 +110,8 @@ export class DebtsService {
   ): Promise<DebtDto> {
     const existing = await this.prisma.debt.findFirst({ where: { id, userId, deletedAt: null } });
     if (!existing) throw new NotFoundException('Debt not found');
+
+    if (input.accountId) await this.requireOwnedAccount(userId, input.accountId);
 
     const debt = await this.prisma.debt.update({
       where: { id },
@@ -125,6 +131,7 @@ export class DebtsService {
           : {}),
         ...(input.currency !== undefined ? { currency: input.currency } : {}),
         ...(input.dueDayOfMonth !== undefined ? { dueDayOfMonth: input.dueDayOfMonth } : {}),
+        ...(input.accountId !== undefined ? { accountId: input.accountId } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
         ...(input.isClosed !== undefined
           ? { isClosed: input.isClosed, closedAt: input.isClosed ? new Date() : null }
@@ -154,6 +161,8 @@ export class DebtsService {
    * statement is the source of truth.
    */
   async recordPayment(userId: string, debtId: string, input: DebtPaymentInput) {
+    if (input.accountId) await this.requireOwnedAccount(userId, input.accountId);
+
     return this.prisma.$transaction(async (tx) => {
       const debt = await tx.debt.findFirst({ where: { id: debtId, userId, deletedAt: null } });
       if (!debt) throw new NotFoundException('Debt not found');
@@ -171,10 +180,15 @@ export class DebtsService {
       const newBalance = Math.max(balance + interestMinor - input.amountMinor, 0);
       const clearsDebt = newBalance === 0;
 
+      // Explicit input wins; otherwise fall back to the debt's own default —
+      // set once, a recurring installment needs no re-picking every month.
+      const accountId = input.accountId !== undefined ? input.accountId : debt.accountId;
+
       const payment = await tx.debtPayment.create({
         data: {
           userId,
           debtId,
+          accountId,
           amountMinor: BigInt(input.amountMinor),
           principalMinor: BigInt(principalMinor),
           interestMinor: BigInt(interestMinor),
@@ -201,10 +215,18 @@ export class DebtsService {
         principalMinor,
         interestMinor,
         balanceAfterMinor: newBalance,
+        accountId,
         debtCleared: clearsDebt,
         date: input.date,
       };
     });
+  }
+
+  private async requireOwnedAccount(userId: string, accountId: string): Promise<void> {
+    const owned = await this.prisma.financialAccount.count({
+      where: { id: accountId, userId, deletedAt: null },
+    });
+    if (owned === 0) throw new NotFoundException('Account not found');
   }
 
   async listPayments(userId: string, debtId: string) {
@@ -220,6 +242,7 @@ export class DebtsService {
       principalMinor: toNumber(p.principalMinor),
       interestMinor: toNumber(p.interestMinor),
       balanceAfterMinor: toNumber(p.balanceAfterMinor),
+      accountId: p.accountId,
       currency: p.currency,
       date: requireIsoDate(p.date),
       notes: p.notes,
