@@ -80,7 +80,7 @@ export class AccountsService {
   ): Promise<{ net: number; count: number }> {
     const since = account.openingBalanceDate;
 
-    const [spent, received] = await Promise.all([
+    const [spent, received, contributed] = await Promise.all([
       this.prisma.expense.groupBy({
         by: ['currency'],
         where: { accountId: account.id, deletedAt: null, date: { gte: since } },
@@ -93,6 +93,18 @@ export class AccountsService {
         _sum: { amountMinor: true },
         _count: { _all: true },
       }),
+      // Paying into a savings goal moves money out of the account rather than
+      // spending it. Without this the same money sits in cash and in savings at
+      // once, and net worth — cash plus savings — counts it twice.
+      //
+      // Contributions are signed, so a withdrawal from a goal is negative and
+      // the same subtraction returns the money to the account.
+      this.prisma.goalContribution.groupBy({
+        by: ['currency'],
+        where: { accountId: account.id, date: { gte: since } },
+        _sum: { amountMinor: true },
+        _count: { _all: true },
+      }),
     ]);
 
     let net = 0;
@@ -100,6 +112,7 @@ export class AccountsService {
     for (const [rows, sign] of [
       [spent, -1],
       [received, 1],
+      [contributed, -1],
     ] as const) {
       for (const row of rows) {
         count += row._count._all;

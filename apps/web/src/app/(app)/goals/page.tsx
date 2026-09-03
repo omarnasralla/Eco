@@ -14,6 +14,7 @@ import {
   goalContributionSchema,
   savingsGoalSchema,
   type GoalContributionInput,
+  type AccountDto,
   type SavingsGoalDto,
   type SavingsGoalInput,
 } from '@eco/shared';
@@ -57,6 +58,7 @@ function GoalsContent() {
   const [addOpen, setAddOpen] = useState(searchParams.get('new') === '1');
   const [contributeTo, setContributeTo] = useState<SavingsGoalDto | null>(null);
   const [editing, setEditing] = useState<SavingsGoalDto | null>(null);
+  const accounts = useQuery({ queryKey: queryKeys.accounts, queryFn: fetchers.accounts });
 
   const goals = useQuery({ queryKey: queryKeys.goals, queryFn: fetchers.goals });
 
@@ -214,6 +216,7 @@ function GoalsContent() {
 
       <ContributeDialog
         goal={contributeTo}
+        accounts={accounts.data ?? []}
         onClose={() => setContributeTo(null)}
         locale={locale}
         onSaved={refreshAll}
@@ -483,17 +486,21 @@ function GoalDialog({
 
 function ContributeDialog({
   goal,
+  accounts,
   onClose,
   locale,
   onSaved,
 }: {
   goal: SavingsGoalDto | null;
+  accounts: AccountDto[];
   onClose: () => void;
   locale: string;
   onSaved: () => void;
 }) {
   const [amount, setAmount] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  const [accountId, setAccountId] = useState<string | null | undefined>(undefined);
+  const primaryId = accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null;
   // The goal's own currency is the sensible default here — not the base
   // currency, and not the last one used for an expense.
   const [currency, setCurrency] = useState(goal?.currency ?? 'USD');
@@ -522,6 +529,11 @@ function ContributeDialog({
     });
   }, [goal, reset]);
 
+  useEffect(() => {
+    if (!primaryId) return;
+    setAccountId((current) => (current === undefined ? primaryId : current));
+  }, [primaryId]);
+
   const contribute = useMutation({
     mutationFn: (input: GoalContributionInput) =>
       api.post(`/goals/${goal!.id}/contributions`, input),
@@ -537,7 +549,7 @@ function ContributeDialog({
     setFormError(null);
     // Same joining as the other forms: the picker owns the currency, the form
     // owns everything else.
-    contribute.mutate({ ...values, currency });
+    contribute.mutate({ ...values, currency, accountId: accountId ?? null });
   });
 
   return (
@@ -572,6 +584,36 @@ function ContributeDialog({
             <Label htmlFor="contribution-date">Date</Label>
             <Input id="contribution-date" type="date" {...register('date')} />
           </div>
+
+          {accounts.length > 0 ? (
+            <div className="space-y-2">
+              <Label htmlFor="contribution-account">Taken from</Label>
+              <Select
+                value={accountId ?? 'none'}
+                onValueChange={(v) => {
+                  // Radix emits '' while items register; no item has that value.
+                  if (!v) return;
+                  setAccountId(v === 'none' ? null : v);
+                }}
+              >
+                <SelectTrigger id="contribution-account">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map((account) => (
+                    <SelectItem key={account.id} value={account.id}>
+                      {account.name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="none">Not from a tracked account</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Saving moves money rather than creating it, so this comes out of the account
+                balance. Leave it untracked and the same money counts as both cash and savings.
+              </p>
+            </div>
+          ) : null}
 
           <div className="space-y-2">
             <Label htmlFor="contribution-notes">Notes (optional)</Label>

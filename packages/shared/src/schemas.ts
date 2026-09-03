@@ -280,6 +280,11 @@ export const goalContributionSchema = z.object({
    */
   currency: currencyCode.optional(),
   date: isoDate,
+  /**
+   * The account the money came out of. Null records the saving without moving
+   * any balance, which leaves the same money counted as both cash and savings.
+   */
+  accountId: uuid.nullish(),
   notes: z.string().trim().max(500).nullish(),
 });
 

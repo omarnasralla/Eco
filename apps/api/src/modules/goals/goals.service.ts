@@ -168,6 +168,13 @@ export class GoalsService {
     });
     if (!target) throw new NotFoundException('Savings goal not found');
 
+    if (input.accountId) {
+      const owned = await this.prisma.financialAccount.count({
+        where: { id: input.accountId, userId, deletedAt: null },
+      });
+      if (owned === 0) throw new NotFoundException('Account not found');
+    }
+
     const enteredCurrency = input.currency ?? target.currency;
     const goalAmountMinor = await this.currency.convert(
       input.amountMinor,
@@ -194,6 +201,7 @@ export class GoalsService {
         data: {
           userId,
           goalId,
+          accountId: input.accountId ?? null,
           amountMinor: BigInt(input.amountMinor),
           currency: enteredCurrency,
           goalAmountMinor: BigInt(goalAmountMinor),
