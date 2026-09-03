@@ -6,13 +6,16 @@ import { RedisService } from '../../redis/redis.service';
 import { CurrencyService } from '../currency/currency.service';
 import { toNumber } from '../../common/utils/money';
 
-function toDto(account: FinancialAccount): AccountDto {
+function toDto(account: FinancialAccount, balanceMinor: number, movements: number): AccountDto {
   return {
     id: account.id,
     name: account.name,
     kind: account.kind as AccountDto['kind'],
     currency: account.currency,
-    balanceMinor: toNumber(account.balanceMinor),
+    openingBalanceMinor: toNumber(account.openingBalanceMinor),
+    openingBalanceDate: account.openingBalanceDate.toISOString().slice(0, 10),
+    balanceMinor,
+    movementCount: movements,
     isPrimary: account.isPrimary,
     updatedAt: account.updatedAt.toISOString(),
     createdAt: account.createdAt.toISOString(),
@@ -34,7 +37,80 @@ export class AccountsService {
       where: { userId, deletedAt: null },
       orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
     });
-    return accounts.map(toDto);
+    return Promise.all(accounts.map((account) => this.withBalance(account)));
+  }
+
+  /**
+   * The live balance: the opening figure plus everything assigned to the
+   * account since that date.
+   *
+   * Computed on read rather than kept as a running total. A stored total has to
+   * be adjusted on every create, edit and delete, and any missed path leaves it
+   * quietly wrong for good; deriving it means an edited expense moves the
+   * balance by exactly what it moved it by, and a deleted one un-moves it.
+   *
+   * Sums are grouped by currency in the database and converted once per
+   * currency rather than once per row. Cross-currency movements convert at
+   * today's rate, not the transaction's: a balance is a position held now, and
+   * what a past purchase would be worth today is the honest way to express a
+   * foreign-currency movement inside an account denominated in something else.
+   * The overwhelmingly common case — spending from an account in its own
+   * currency — needs no conversion at all.
+   */
+  private async withBalance(account: FinancialAccount): Promise<AccountDto> {
+    const { net, count } = await this.movementsSince(account);
+    return toDto(account, toNumber(account.openingBalanceMinor) + net, count);
+  }
+
+  /**
+   * The net effect of everything assigned to the account since its opening
+   * date, in the account's own currency.
+   *
+   * Sums are grouped by currency in the database and converted once per
+   * currency rather than once per row. Cross-currency movements convert at
+   * today's rate, not the transaction's: a balance is a position held now, so
+   * what a foreign-currency purchase is worth today is the honest way to
+   * express it inside an account denominated in something else. The
+   * overwhelmingly common case — spending from an account in its own currency
+   * — needs no conversion at all.
+   */
+  private async movementsSince(
+    account: FinancialAccount,
+  ): Promise<{ net: number; count: number }> {
+    const since = account.openingBalanceDate;
+
+    const [spent, received] = await Promise.all([
+      this.prisma.expense.groupBy({
+        by: ['currency'],
+        where: { accountId: account.id, deletedAt: null, date: { gte: since } },
+        _sum: { amountMinor: true },
+        _count: { _all: true },
+      }),
+      this.prisma.incomeReceipt.groupBy({
+        by: ['currency'],
+        where: { accountId: account.id, date: { gte: since } },
+        _sum: { amountMinor: true },
+        _count: { _all: true },
+      }),
+    ]);
+
+    let net = 0;
+    let count = 0;
+    for (const [rows, sign] of [
+      [spent, -1],
+      [received, 1],
+    ] as const) {
+      for (const row of rows) {
+        count += row._count._all;
+        const amount = toNumber(row._sum.amountMinor ?? BigInt(0));
+        net +=
+          sign *
+          (row.currency === account.currency
+            ? amount
+            : await this.currency.convertForDisplay(amount, row.currency, account.currency));
+      }
+    }
+    return { net, count };
   }
 
   /**
@@ -82,7 +158,7 @@ export class AccountsService {
       where: { id, userId, deletedAt: null },
     });
     if (!account) throw new NotFoundException('Account not found');
-    return toDto(account);
+    return this.withBalance(account);
   }
 
   async create(userId: string, input: AccountInput): Promise<AccountDto> {
@@ -103,7 +179,8 @@ export class AccountsService {
           name: input.name,
           kind: input.kind,
           currency: input.currency,
-          balanceMinor: BigInt(input.balanceMinor),
+          openingBalanceMinor: BigInt(input.balanceMinor),
+          openingBalanceDate: new Date(),
           // The first account is primary whether or not the box was ticked:
           // one account and no primary is a state with no useful meaning.
           isPrimary: input.isPrimary || isFirst,
@@ -112,7 +189,7 @@ export class AccountsService {
     });
 
     await this.redis.invalidateUser(userId);
-    return toDto(account);
+    return this.withBalance(account);
   }
 
   async update(userId: string, id: string, input: UpdateAccountInput): Promise<AccountDto> {
@@ -135,7 +212,7 @@ export class AccountsService {
           ...(input.kind !== undefined ? { kind: input.kind } : {}),
           ...(input.currency !== undefined ? { currency: input.currency } : {}),
           ...(input.balanceMinor !== undefined
-            ? { balanceMinor: BigInt(input.balanceMinor) }
+            ? { openingBalanceMinor: BigInt(await this.openingFor(existing, input.balanceMinor)) }
             : {}),
           ...(input.isPrimary !== undefined ? { isPrimary: input.isPrimary } : {}),
         },
@@ -143,7 +220,24 @@ export class AccountsService {
     });
 
     await this.redis.invalidateUser(userId);
-    return toDto(account);
+    return this.withBalance(account);
+  }
+
+  /**
+   * The opening figure that makes the derived balance equal what the user just
+   * said the balance is.
+   *
+   * Setting a balance is a reconciliation — "the bank says it is this" — so it
+   * has to land on that number exactly. Moving the opening *date* to today
+   * cannot achieve that: a transaction dated today would still be counted on
+   * top of the correction, so reconciling to 500 after spending 30 today read
+   * 470. Solving for the opening instead keeps every movement in the ledger and
+   * still lands on the stated figure, and leaves `openingBalanceMinor` meaning
+   * exactly what it says — the balance as at the opening date.
+   */
+  private async openingFor(account: FinancialAccount, targetMinor: number): Promise<number> {
+    const { net } = await this.movementsSince(account);
+    return targetMinor - net;
   }
 
   async remove(userId: string, id: string): Promise<void> {

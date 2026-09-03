@@ -18,6 +18,7 @@ import {
   isoDate,
   minorAmount,
   updateIncomeSourceSchema,
+  uuid,
   type IncomeSourceInput,
 } from '@eco/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -28,6 +29,8 @@ import { IncomeService } from './income.service';
 const receiptSchema = z.object({
   amountMinor: minorAmount,
   date: isoDate,
+  /** Which account the money landed in. Null moves no balance. */
+  accountId: uuid.nullish(),
   notes: z.string().trim().max(500).nullish(),
 });
 
@@ -76,7 +79,13 @@ export class IncomeController {
   async recordReceipt(
     @CurrentUser() user: { id: string; currency: string },
     @Param('id', ParseUUIDPipe) id: string,
-    @Body(zodBody(receiptSchema)) dto: { amountMinor: number; date: string; notes?: string | null },
+    @Body(zodBody(receiptSchema))
+    dto: {
+      amountMinor: number;
+      date: string;
+      accountId?: string | null;
+      notes?: string | null;
+    },
   ) {
     return this.income.recordReceipt(user.id, id, dto, user.currency);
   }

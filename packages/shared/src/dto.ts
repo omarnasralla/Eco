@@ -111,6 +111,8 @@ export interface ExpenseDto {
   baseAmountMinor: number;
   categoryId: string;
   category?: Pick<CategoryDto, 'id' | 'name' | 'icon' | 'color'>;
+  /** The account it was paid from, when one was chosen. */
+  accountId: string | null;
   date: string;
   merchant: string | null;
   notes: string | null;
@@ -474,18 +476,27 @@ export interface AdminStats {
 /**
  * An account and what is in it.
  *
- * Balances are entered by hand and are not derived from the expense and income
- * records: those describe flows over time, while this is a position at a
- * moment. Deriving one from the other needs an opening balance and a complete
- * ledger, and an incomplete ledger silently produces a wrong balance — which is
- * worse than a figure the user knows they typed.
+ * The balance is derived: an opening figure the user reconciles, plus every
+ * expense and income receipt assigned to the account since that date. Setting a
+ * balance moves the opening date to today, so a correction supersedes the
+ * movements it already accounts for rather than being applied on top of them.
+ *
+ * Transactions left unassigned move no balance. That is the honest failure
+ * mode — a partial ledger produces a balance that is knowably incomplete rather
+ * than confidently wrong — and `movementCount` lets the UI say so.
  */
 export interface AccountDto {
   id: string;
   name: string;
   kind: AccountKind;
   currency: string;
+  /** The balance as at `openingBalanceDate`, as last reconciled by the user. */
+  openingBalanceMinor: number;
+  openingBalanceDate: string;
+  /** Opening figure plus every transaction assigned since. Computed on read. */
   balanceMinor: number;
+  /** How many transactions have moved it since the opening date. */
+  movementCount: number;
   isPrimary: boolean;
   /** When the balance was last set, so a stale figure can be seen to be stale. */
   updatedAt: string;

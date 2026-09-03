@@ -317,7 +317,11 @@ model FinancialAccount {
   /// CHECKING | SAVINGS | CASH | INVESTMENT | OTHER
   kind           String   @db.VarChar(24)
   currency       String   @db.Char(3)
-  balanceMinor   BigInt   @default(0)
+  /// The balance as at `openingBalanceDate`. The live balance is this plus
+  /// every assigned transaction since, computed on read rather than stored, so
+  /// an edited or deleted transaction cannot leave the figure drifted.
+  openingBalanceMinor BigInt @default(0)
+  openingBalanceDate  DateTime @default(now()) @db.Date
   isPrimary      Boolean  @default(false)
   /// Reserved for bank aggregation; null while the account is manual.
   providerId     String?  @db.VarChar(60)
@@ -327,7 +331,9 @@ model FinancialAccount {
   updatedAt      DateTime @updatedAt
   deletedAt      DateTime?
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expenses Expense[]
+  receipts IncomeReceipt[]
 
   @@index([userId, deletedAt])
   @@unique([providerId, externalId])
@@ -383,6 +389,7 @@ model IncomeReceipt {
   id             String   @id @default(uuid()) @db.Uuid
   userId         String   @db.Uuid
   incomeSourceId String   @db.Uuid
+  accountId      String?  @db.Uuid
   amountMinor    BigInt
   currency       String   @db.Char(3)
   /// Amount converted to the user's base currency at the receipt-date rate.
@@ -391,9 +398,11 @@ model IncomeReceipt {
   notes          String?  @db.Text
   createdAt      DateTime @default(now())
 
-  incomeSource IncomeSource @relation(fields: [incomeSourceId], references: [id], onDelete: Cascade)
+  incomeSource IncomeSource      @relation(fields: [incomeSourceId], references: [id], onDelete: Cascade)
+  account      FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
   @@index([userId, date])
+  @@index([accountId, date])
   @@index([incomeSourceId, date])
   @@map("income_receipts")
 }
@@ -468,11 +477,14 @@ model Expense {
 
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  /// Removing an account must not delete the spending that went through it.
+  account  FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
   // The workhorse index: every list, chart and report filters by user and date.
   @@index([userId, date(sort: Desc), deletedAt])
   @@index([userId, categoryId, date])
   @@index([userId, merchant])
+  @@index([accountId, date])
   @@index([recurringGroupId])
   @@map("expenses")
 }

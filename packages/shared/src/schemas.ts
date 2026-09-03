@@ -179,6 +179,8 @@ export const updateCategorySchema = categorySchema.partial().extend({
 
 export const expenseSchema = z.object({
   amountMinor: positiveMinorAmount,
+  /** Which account it came out of. Null leaves every balance untouched. */
+  accountId: uuid.nullish(),
   currency: currencyCode,
   categoryId: uuid,
   date: isoDate,

@@ -19,6 +19,7 @@ function toDto(expense: ExpenseRow): ExpenseDto {
     baseAmountMinor: toNumber(expense.baseAmountMinor),
     categoryId: expense.categoryId,
     category: expense.category ?? undefined,
+    accountId: expense.accountId,
     date: requireIsoDate(expense.date),
     merchant: expense.merchant,
     notes: expense.notes,
@@ -151,6 +152,7 @@ export class ExpensesService {
 
   async create(userId: string, input: ExpenseInput, userCurrency: string): Promise<ExpenseDto> {
     await this.assertCategoryOwned(userId, input.categoryId);
+    if (input.accountId) await this.assertAccountOwned(userId, input.accountId);
 
     // Convert at the transaction date's rate and freeze it on the row. Every
     // dashboard aggregate sums baseAmountMinor, so this is what keeps totals
@@ -166,6 +168,7 @@ export class ExpensesService {
       data: {
         userId,
         categoryId: input.categoryId,
+        accountId: input.accountId ?? null,
         amountMinor: BigInt(input.amountMinor),
         currency: input.currency,
         baseAmountMinor: BigInt(baseAmountMinor),
@@ -194,6 +197,7 @@ export class ExpensesService {
     });
     if (!existing) throw new NotFoundException('Expense not found');
     if (input.categoryId) await this.assertCategoryOwned(userId, input.categoryId);
+    if (input.accountId) await this.assertAccountOwned(userId, input.accountId);
 
     // Re-derive the base amount whenever amount, currency or date moves —
     // any of the three changes what the transaction was worth.
@@ -213,6 +217,7 @@ export class ExpensesService {
       where: { id },
       data: {
         ...(input.categoryId !== undefined ? { categoryId: input.categoryId } : {}),
+        ...(input.accountId !== undefined ? { accountId: input.accountId ?? null } : {}),
         ...(input.amountMinor !== undefined ? { amountMinor: BigInt(input.amountMinor) } : {}),
         ...(input.currency !== undefined ? { currency: input.currency } : {}),
         ...(baseAmountMinor !== undefined ? { baseAmountMinor: BigInt(baseAmountMinor) } : {}),
@@ -276,6 +281,13 @@ export class ExpensesService {
     const { count } = await this.prisma.expense.createMany({ data: rows });
     await this.redis.invalidateUser(userId);
     return { created: count };
+  }
+
+  private async assertAccountOwned(userId: string, accountId: string): Promise<void> {
+    const exists = await this.prisma.financialAccount.count({
+      where: { id: accountId, userId, deletedAt: null },
+    });
+    if (exists === 0) throw new NotFoundException('Account not found');
   }
 
   private async assertCategoryOwned(userId: string, categoryId: string): Promise<void> {

@@ -122,8 +122,10 @@ export default function AccountsPage() {
                           ) : null}
                         </p>
                         <p className="truncate text-xs text-muted-foreground">
-                          {ACCOUNT_KIND_LABELS[account.kind]} · updated{' '}
-                          {formatDate(account.updatedAt, locale)}
+                          {ACCOUNT_KIND_LABELS[account.kind]} ·{' '}
+                          {account.movementCount > 0
+                            ? `${account.movementCount} transaction${account.movementCount === 1 ? '' : 's'} since ${formatDate(account.openingBalanceDate, locale)}`
+                            : `set ${formatDate(account.openingBalanceDate, locale)}`}
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
@@ -149,8 +151,8 @@ export default function AccountsPage() {
           </Card>
 
           <p className="mt-3 text-xs text-muted-foreground">
-            Balances are what you tell Eco they are — they are not worked out from your expenses,
-            so update one when it drifts.
+            Balances update themselves from the expenses and income you assign to each account. If
+            one drifts from your bank, set it here and Eco takes that as the truth from then on.
           </p>
         </>
       )}
@@ -268,7 +270,7 @@ function AccountDialog({
           <DialogTitle>{editing ? 'Edit account' : 'Add an account'}</DialogTitle>
           <DialogDescription>
             {editing
-              ? 'Update the balance when it drifts — this is the figure Eco treats as what you hold.'
+              ? 'Setting a balance is a correction: Eco takes it as true now, and carries on from there.'
               : 'An account and what is in it right now.'}
           </DialogDescription>
         </DialogHeader>
@@ -323,7 +325,11 @@ function AccountDialog({
             // cannot enter.
             allowNegative
             autoFocus={!editing}
-            hint="What is in it right now. Use a minus sign if you are overdrawn."
+            hint={
+              editing
+                ? 'What your bank says it is now. Transactions since will carry on from this figure.'
+                : 'What is in it right now. Use a minus sign if you are overdrawn.'
+            }
           />
 
           <label className="flex items-center gap-2 text-sm">

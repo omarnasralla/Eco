@@ -133,7 +133,7 @@ export class IncomeService {
   async recordReceipt(
     userId: string,
     incomeSourceId: string,
-    input: { amountMinor: number; date: string; notes?: string | null },
+    input: { amountMinor: number; date: string; accountId?: string | null; notes?: string | null },
     userCurrency: string,
   ) {
     const source = await this.prisma.incomeSource.findFirst({
@@ -141,10 +141,18 @@ export class IncomeService {
     });
     if (!source) throw new NotFoundException('Income source not found');
 
+    if (input.accountId) {
+      const owned = await this.prisma.financialAccount.count({
+        where: { id: input.accountId, userId, deletedAt: null },
+      });
+      if (owned === 0) throw new NotFoundException('Account not found');
+    }
+
     const receipt = await this.prisma.incomeReceipt.create({
       data: {
         userId,
         incomeSourceId,
+        accountId: input.accountId ?? null,
         amountMinor: BigInt(input.amountMinor),
         currency: source.currency,
         baseAmountMinor: BigInt(

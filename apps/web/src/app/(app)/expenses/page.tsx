@@ -8,6 +8,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2, Plus, Search, Trash2 } from 'lucide-react';
 import {
   expenseSchema,
+  type AccountDto,
   formatMoney,
   toMajorUnits,
   type ExpenseDto,
@@ -53,6 +54,7 @@ function ExpensesContent() {
   const [categoryId, setCategoryId] = useState<string>('all');
   const [dialogOpen, setDialogOpen] = useState(searchParams.get('new') === '1');
   const [editing, setEditing] = useState<ExpenseDto | null>(null);
+  const accounts = useQuery({ queryKey: queryKeys.accounts, queryFn: fetchers.accounts });
 
   const filters = useMemo(
     () => ({
@@ -180,6 +182,7 @@ function ExpensesContent() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         categories={categories.data ?? []}
+        accounts={accounts.data ?? []}
         baseCurrency={currency}
         locale={locale}
         onSaved={() => {
@@ -197,6 +200,7 @@ function ExpensesContent() {
         open={editing !== null}
         onOpenChange={(next) => (next ? undefined : setEditing(null))}
         categories={categories.data ?? []}
+        accounts={accounts.data ?? []}
         baseCurrency={currency}
         locale={locale}
         onSaved={() => {
@@ -212,6 +216,7 @@ function ExpenseDialog({
   open,
   onOpenChange,
   categories,
+  accounts,
   baseCurrency,
   locale,
   onSaved,
@@ -220,6 +225,7 @@ function ExpenseDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   categories: Array<{ id: string; name: string }>;
+  accounts: AccountDto[];
   /** What totals are reported in; the entry currency may differ. */
   baseCurrency: string;
   locale: string;
@@ -237,6 +243,12 @@ function ExpenseDialog({
   const [lastCategoryId, rememberCategory] = useLastCategory(categories.map((c) => c.id));
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const primaryAccountId = accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null;
+  // Held here rather than in the form, as the entry currency is: it arrives
+  // asynchronously with the accounts query and is joined at submit. setValue on
+  // a field absent from defaultValues did not reach the watch subscriber, which
+  // left every new expense silently unassigned.
+  const [accountId, setAccountId] = useState<string | null | undefined>(undefined);
 
   const {
     register,
@@ -277,10 +289,25 @@ function ExpenseDialog({
         isRecurring: expense.isRecurring,
         tags: expense.tags ?? [],
       });
+      setAccountId(expense.accountId);
     }
     // `expense` is the identity that matters; the setters are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, expense?.id]);
+
+  // The accounts query resolves after the dialog opens, so the default account
+  // is applied when it arrives rather than when the dialog mounts — reading it
+  // at mount time left every new expense unassigned, moving no balance.
+  // Guarded on the field being untouched so it cannot override a real choice,
+  // including a deliberate "not from a tracked account" on an existing row.
+  useEffect(() => {
+    if (!open || editing || !primaryAccountId) return;
+    // Only while untouched, so it cannot override a deliberate choice. The
+    // primaryAccountId guard matters: this effect first runs before the accounts
+    // query resolves, and writing null then would settle the field at "no
+    // account" before the real default ever arrived.
+    setAccountId((current) => (current === undefined ? primaryAccountId : current));
+  }, [open, editing, primaryAccountId]);
 
   // The remembered category arrives from storage after mount, so it is applied
   // here rather than in defaultValues. Guarded on the field being empty so it
@@ -334,7 +361,7 @@ function ExpenseDialog({
     // Only a new entry updates the remembered currency: correcting an old
     // expense recorded in another currency should not change what the next
     // fresh entry defaults to.
-    save.mutate({ ...values, currency: entryCurrency });
+    save.mutate({ ...values, currency: entryCurrency, accountId: accountId ?? null });
   });
 
   return (
@@ -393,6 +420,39 @@ function ExpenseDialog({
               <p className="text-sm text-destructive">Pick a category.</p>
             ) : null}
           </div>
+
+          {accounts.length > 0 ? (
+            <div className="space-y-2">
+              <Label htmlFor="expense-account">Paid from</Label>
+              <Select
+                value={accountId ?? 'none'}
+                onValueChange={(v) => {
+                  // Radix emits an empty value while its items register, which
+                  // happens whenever this dialog opens on mount rather than on
+                  // a click (/expenses?new=1). No item has an empty value, so
+                  // it is never a real choice — taking it left the field blank
+                  // and the request rejected as an invalid uuid.
+                  if (!v) return;
+                  setAccountId(v === 'none' ? null : v);
+                }}
+              >
+                <SelectTrigger id="expense-account">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map((account) => (
+                    <SelectItem key={account.id} value={account.id}>
+                      {account.name}
+                    </SelectItem>
+                  ))}
+                  {/* Explicit, because "no account" is a real answer — cash from
+                      a pocket, or a card Eco does not know about — and it has to
+                      be distinguishable from having forgotten to choose. */}
+                  <SelectItem value="none">Not from a tracked account</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
 
           <div className="space-y-2">
             <Label htmlFor="date">Date</Label>
