@@ -203,7 +203,12 @@ export const expenseQuerySchema = z.object({
   search: z.string().trim().max(160).optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  sort: z.enum(['date', 'amount', 'merchant']).default('date'),
+  /**
+   * `created` — the order things were entered, which is what a list you are
+   * adding to should show: the row you just typed belongs at the top even when
+   * you dated it last Tuesday. `date` orders by when the money was spent.
+   */
+  sort: z.enum(['created', 'date', 'amount', 'merchant']).default('created'),
   order: z.enum(['asc', 'desc']).default('desc'),
 });
 

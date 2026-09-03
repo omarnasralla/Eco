@@ -41,6 +41,18 @@ export class ExpensesController {
     return this.expenses.findAll(user.id, query, user.currency);
   }
 
+  @Get('merchants')
+  // Above @Get(':id'): Nest matches in declaration order, so a literal path
+  // declared after a parameterised one is read as an id.
+  @ApiOperation({ summary: 'Merchants used before, most-used first' })
+  async merchants(
+    @CurrentUser('id') userId: string,
+    @Query('categoryId') categoryId?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.expenses.merchantSuggestions(userId, categoryId, search);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get one expense' })
   async findOne(@CurrentUser('id') userId: string, @Param('id', ParseUUIDPipe) id: string) {

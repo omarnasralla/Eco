@@ -318,6 +318,19 @@ function ExpenseDialog({
     }
   }, [open, lastCategoryId, setValue, watch]);
 
+  const merchantValue = watch('merchant') ?? '';
+  const chosenCategory = watch('categoryId') ?? '';
+  // Keyed on the category, so switching it re-ranks the list rather than
+  // offering names from the previous one. Kept fresh for a few minutes: a
+  // merchant list changes slowly, and this fires on every keystroke.
+  const merchantSuggestions = useQuery({
+    queryKey: queryKeys.merchantSuggestions(chosenCategory, merchantValue),
+    queryFn: () => fetchers.merchantSuggestions(chosenCategory, merchantValue),
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+    placeholderData: (previous) => previous,
+  });
+
   const save = useMutation({
     mutationFn: (input: ExpenseInput) =>
       editing ? api.patch(`/expenses/${expense.id}`, input) : api.post('/expenses', input),
@@ -461,7 +474,22 @@ function ExpenseDialog({
 
           <div className="space-y-2">
             <Label htmlFor="merchant">Merchant (optional)</Label>
-            <Input id="merchant" placeholder="Tesco" {...register('merchant')} />
+            {/* A native datalist rather than a custom dropdown: it suggests
+                without hijacking the keyboard, stays fully typeable when the
+                name is new, and behaves like the browser's own autofill on a
+                phone — which is the interaction people already know. */}
+            <Input
+              id="merchant"
+              placeholder="Tesco"
+              list="merchant-suggestions"
+              autoComplete="off"
+              {...register('merchant')}
+            />
+            <datalist id="merchant-suggestions">
+              {(merchantSuggestions.data ?? []).map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
           </div>
 
           {formError ? (

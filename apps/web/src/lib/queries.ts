@@ -49,6 +49,8 @@ export const queryKeys = {
   goalContributions: (id: string) => ['goals', id, 'contributions'] as const,
   budget: (month: string) => ['budgets', month] as const,
   accounts: ['accounts'] as const,
+  merchantSuggestions: (categoryId: string, search: string) =>
+    ['expenses', 'merchants', categoryId, search] as const,
   incomeReceipts: ['income', 'receipts'] as const,
   accountsSummary: ['accounts', 'summary'] as const,
   budgetSuggestion: (month: string) => ['budgets', 'suggest', month] as const,
@@ -68,6 +70,11 @@ export const queryKeys = {
 
 export const fetchers = {
   accounts: () => api.get<AccountDto[]>('/accounts'),
+
+  merchantSuggestions: (categoryId?: string, search?: string) =>
+    api.get<string[]>('/expenses/merchants', {
+      query: { categoryId: categoryId || undefined, search: search || undefined },
+    }),
 
   incomeReceipts: () => api.get<IncomeReceiptDto[]>('/income/receipts'),
 

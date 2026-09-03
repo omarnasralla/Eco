@@ -99,17 +99,23 @@ export class ExpensesService {
         : {}),
     };
 
-    // Cursor pagination only applies to the default date ordering; the other
-    // sorts fall back to offset, which is acceptable because they are used for
-    // small filtered views rather than infinite scroll.
+    // Cursor pagination applies to the two chronological sorts; amount and
+    // merchant fall back to offset, which is acceptable because they are used
+    // for small filtered views rather than infinite scroll.
+    //
+    // The cursor carries whichever timestamp the sort is keyed on, so paging
+    // and ordering cannot disagree — comparing a createdAt cursor against the
+    // date column would skip and repeat rows.
+    const timeField = query.sort === 'created' ? 'createdAt' : 'date';
+    const chronological = query.sort === 'created' || query.sort === 'date';
     const cursor = query.cursor ? decodeCursor(query.cursor) : null;
-    if (cursor && query.sort === 'date') {
+    if (cursor && chronological) {
       const comparator = query.order === 'desc' ? 'lt' : 'gt';
       where.AND = [
         {
           OR: [
-            { date: { [comparator]: cursor.date } },
-            { date: cursor.date, id: { [comparator]: cursor.id } },
+            { [timeField]: { [comparator]: cursor.date } },
+            { [timeField]: cursor.date, id: { [comparator]: cursor.id } },
           ],
         },
       ];
@@ -120,7 +126,7 @@ export class ExpensesService {
         ? [{ baseAmountMinor: query.order }, { id: query.order }]
         : query.sort === 'merchant'
           ? [{ merchant: query.order }, { id: query.order }]
-          : [{ date: query.order }, { id: query.order }];
+          : [{ [timeField]: query.order }, { id: query.order }];
 
     // Fetch one extra row to learn whether another page exists, without a
     // second COUNT query on every scroll.
@@ -137,7 +143,8 @@ export class ExpensesService {
 
     return {
       items: items.map(toDto),
-      nextCursor: hasMore && last ? encodeCursor(last.date, last.id) : null,
+      nextCursor:
+        hasMore && last ? encodeCursor(last[timeField], last.id) : null,
     };
   }
 
@@ -148,6 +155,43 @@ export class ExpensesService {
     });
     if (!expense) throw new NotFoundException('Expense not found');
     return toDto(expense);
+  }
+
+  /**
+   * Merchants this user has spent at before, most-used first.
+   *
+   * Scoped to a category when one is given, because that is what makes the
+   * suggestion worth having: "Tes" in Food should offer Tesco, not a lender
+   * called Tessa. Falls back to the whole history when no category is chosen
+   * yet, so the field is useful before the form is complete.
+   *
+   * Ordered by how often each name has been used rather than how recently. A
+   * frequency ranking puts the weekly shop above the once-visited restaurant,
+   * which is the guess more likely to save a keystroke.
+   */
+  async merchantSuggestions(
+    userId: string,
+    categoryId?: string,
+    search?: string,
+    limit = 8,
+  ): Promise<string[]> {
+    const rows = await this.prisma.expense.groupBy({
+      by: ['merchant'],
+      where: {
+        userId,
+        deletedAt: null,
+        merchant: {
+          not: null,
+          ...(search ? { contains: search, mode: 'insensitive' } : {}),
+        },
+        ...(categoryId ? { categoryId } : {}),
+      },
+      _count: { merchant: true },
+      orderBy: { _count: { merchant: 'desc' } },
+      take: limit,
+    });
+
+    return rows.map((row) => row.merchant).filter((m): m is string => m !== null && m !== '');
   }
 
   async create(userId: string, input: ExpenseInput, userCurrency: string): Promise<ExpenseDto> {

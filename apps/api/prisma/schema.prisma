@@ -489,6 +489,10 @@ model Expense {
   @@index([userId, categoryId, date])
   @@index([userId, merchant])
   @@index([accountId, date])
+  /// The list defaults to creation order, so this is the workhorse index now.
+  @@index([userId, createdAt(sort: Desc), deletedAt])
+  /// Merchant suggestions, looked up per category.
+  @@index([userId, categoryId, merchant])
   @@index([recurringGroupId])
   @@map("expenses")
 }
