@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {
   CalendarClock,
   CreditCard,
+  Landmark,
   PiggyBank,
   Receipt,
   TrendingUp,
@@ -98,11 +99,22 @@ export default function DashboardPage() {
           hint={data ? `${data.goalsOnTrack}/${data.goalsTotal} goals on track` : undefined}
         />
         <StatTile
+          label="Cash on hand"
+          valueMinor={data?.totalCashMinor ?? 0}
+          icon={Landmark}
+          loading={summary.isLoading}
+          hint={
+            data && data.totalCashMinor === 0
+              ? 'Add an account to track this'
+              : 'Across your accounts'
+          }
+        />
+        <StatTile
           label="Net worth"
           valueMinor={data?.netWorthMinor ?? 0}
           icon={Wallet}
           loading={summary.isLoading}
-          hint="Savings less debt"
+          hint="Cash plus savings, less debt"
         />
       </div>
 

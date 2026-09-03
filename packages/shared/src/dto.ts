@@ -4,6 +4,7 @@
  * shows up as a TypeScript error rather than a runtime surprise.
  */
 import type {
+  AccountKind,
   BudgetType,
   DebtType,
   Frequency,
@@ -244,6 +245,8 @@ export interface DashboardSummaryDto {
   savingsRateBasisMonth: string;
   totalDebtMinor: number;
   totalSavingsMinor: number;
+  /** Cash across all accounts, in the base currency. */
+  totalCashMinor: number;
   netWorthMinor: number;
   /** Percentage change against the previous equivalent period. */
   deltas: {
@@ -464,4 +467,36 @@ export interface AdminStats {
     budgets: number;
     aiConversations: number;
   };
+}
+
+/* ── Accounts ─────────────────────────────────────────────── */
+
+/**
+ * An account and what is in it.
+ *
+ * Balances are entered by hand and are not derived from the expense and income
+ * records: those describe flows over time, while this is a position at a
+ * moment. Deriving one from the other needs an opening balance and a complete
+ * ledger, and an incomplete ledger silently produces a wrong balance — which is
+ * worse than a figure the user knows they typed.
+ */
+export interface AccountDto {
+  id: string;
+  name: string;
+  kind: AccountKind;
+  currency: string;
+  balanceMinor: number;
+  isPrimary: boolean;
+  /** When the balance was last set, so a stale figure can be seen to be stale. */
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface AccountsSummaryDto {
+  /** Every account converted into the user's base currency and added up. */
+  totalMinor: number;
+  currency: string;
+  /** Accounts held in a currency with no rate available, so left out. */
+  unconvertedCount: number;
+  accounts: AccountDto[];
 }

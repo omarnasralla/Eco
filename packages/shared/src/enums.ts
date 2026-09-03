@@ -64,6 +64,18 @@ export const GOAL_STATUSES = ['ACTIVE', 'ACHIEVED', 'PAUSED', 'ABANDONED'] as co
 export type GoalStatus = (typeof GOAL_STATUSES)[number];
 
 export const BUDGET_TYPES = ['FIXED', 'VARIABLE', 'ROLLING'] as const;
+
+/** Where money actually sits. Mirrors FinancialAccount.kind in the schema. */
+export const ACCOUNT_KINDS = ['CHECKING', 'SAVINGS', 'CASH', 'INVESTMENT', 'OTHER'] as const;
+export type AccountKind = (typeof ACCOUNT_KINDS)[number];
+
+export const ACCOUNT_KIND_LABELS: Record<AccountKind, string> = {
+  CHECKING: 'Current account',
+  SAVINGS: 'Savings',
+  CASH: 'Cash',
+  INVESTMENT: 'Investments',
+  OTHER: 'Other',
+};
 export type BudgetType = (typeof BUDGET_TYPES)[number];
 
 export const NOTIFICATION_CHANNELS = ['IN_APP', 'EMAIL', 'PUSH'] as const;

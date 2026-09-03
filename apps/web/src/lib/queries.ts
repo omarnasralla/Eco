@@ -1,6 +1,8 @@
 'use client';
 
 import type {
+  AccountDto,
+  AccountsSummaryDto,
   AdminStats,
   AdminUserDetail,
   AdminUserRow,
@@ -45,6 +47,8 @@ export const queryKeys = {
   goals: ['goals'] as const,
   goalContributions: (id: string) => ['goals', id, 'contributions'] as const,
   budget: (month: string) => ['budgets', month] as const,
+  accounts: ['accounts'] as const,
+  accountsSummary: ['accounts', 'summary'] as const,
   budgetSuggestion: (month: string) => ['budgets', 'suggest', month] as const,
   adminStats: ['admin', 'stats'] as const,
   adminUsers: (search: string, status: string) => ['admin', 'users', search, status] as const,
@@ -61,6 +65,10 @@ export const queryKeys = {
 } as const;
 
 export const fetchers = {
+  accounts: () => api.get<AccountDto[]>('/accounts'),
+
+  accountsSummary: () => api.get<AccountsSummaryDto>('/accounts/summary'),
+
   budgetSuggestion: (month: string) =>
     api.get<{ lines: Array<{ categoryId: string; limitMinor: number }>; totalLimitMinor: number }>(
       '/budgets/suggest',

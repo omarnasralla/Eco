@@ -16,6 +16,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { IncomeService } from '../income/income.service';
+import { AccountsService } from '../accounts/accounts.service';
 import { GoalsService } from '../goals/goals.service';
 import { toNumber } from '../../common/utils/money';
 import { monthToDate, todayIso } from '../../common/utils/dates';
@@ -28,6 +29,7 @@ export class DashboardService {
     private readonly redis: RedisService,
     private readonly income: IncomeService,
     private readonly goals: GoalsService,
+    private readonly accounts: AccountsService,
     private readonly currency: CurrencyService,
   ) {}
 
@@ -52,6 +54,7 @@ export class DashboardService {
         monthlyIncome,
         totalDebt,
         totalSavings,
+        totalCash,
         goalCounts,
         upcomingBills,
       ] = await Promise.all([
@@ -60,6 +63,7 @@ export class DashboardService {
         this.income.monthlyTotal(userId, userCurrency),
         this.totalDebt(userId, userCurrency),
         this.goals.totalSaved(userId, userCurrency),
+        this.accounts.totalBalance(userId, userCurrency),
         this.goalCounts(userId),
         this.upcomingBills(userId, 14),
       ]);
@@ -86,10 +90,15 @@ export class DashboardService {
       const savingsRateBasisMonth = `${basisMonths.at(-1)} to ${basisMonths[0]}`;
       const savingsRatePctValue = savingsRatePct(monthlyIncome, averageExpenses);
 
-      // Net worth here is liquid savings less outstanding debt. It deliberately
-      // excludes illiquid assets (property, pensions) — Eco does not track them
-      // yet, and a partial figure presented as "net worth" would mislead.
-      const netWorthMinor = totalSavings - totalDebt;
+      // Cash in accounts, plus what is set aside in goals, less what is owed.
+      // Cash belongs here because it is the part of net worth a person can
+      // actually spend, and its absence was conspicuous: money received last
+      // month and held for this one appeared nowhere at all.
+      //
+      // Still deliberately excludes illiquid assets — property and pensions are
+      // not tracked, and a partial figure presented as "net worth" would
+      // mislead in the flattering direction.
+      const netWorthMinor = totalCash + totalSavings - totalDebt;
 
       const budget = await this.currentBudgetUtilisation(userId, targetMonth);
 
@@ -103,6 +112,7 @@ export class DashboardService {
         savingsRateBasisMonth,
         totalDebtMinor: totalDebt,
         totalSavingsMinor: totalSavings,
+        totalCashMinor: totalCash,
         netWorthMinor,
         deltas: {
           incomePct: 0, // Income is a run rate, so month-over-month is flat by construction.

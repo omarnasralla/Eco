@@ -15,6 +15,7 @@ import {
   PAYOFF_STRATEGIES,
   REPORT_PERIODS,
   USER_ROLES,
+  ACCOUNT_KINDS,
 } from './enums';
 
 /** Amounts arrive as integer minor units — see money.ts for the rationale. */
@@ -399,3 +400,23 @@ export const adminUserQuerySchema = z.object({
 
 export type AdminUpdateUserInput = z.infer<typeof adminUpdateUserSchema>;
 export type AdminUserQuery = z.infer<typeof adminUserQuerySchema>;
+
+/* ── Accounts ─────────────────────────────────────────────── */
+
+export const accountSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  kind: z.enum(ACCOUNT_KINDS),
+  currency: currencyCode,
+  /**
+   * Signed, unlike a transaction amount: a current account can be overdrawn,
+   * and refusing to record that would make the one balance a person most needs
+   * to see the one they cannot enter.
+   */
+  balanceMinor: signedMinorAmount,
+  isPrimary: z.boolean().default(false),
+});
+
+export const updateAccountSchema = accountSchema.partial();
+
+export type AccountInput = z.infer<typeof accountSchema>;
+export type UpdateAccountInput = z.infer<typeof updateAccountSchema>;

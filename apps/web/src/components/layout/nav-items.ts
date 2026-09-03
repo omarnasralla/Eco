@@ -1,5 +1,6 @@
 import {
   Bot,
+  Landmark,
   ShieldCheck,
   CreditCard,
   LayoutDashboard,
@@ -40,6 +41,7 @@ export const NAV_ITEMS: NavItem[] = [
   // Goals and Reports reachable on a phone at all.
   { href: '/debts', label: 'Debts', icon: CreditCard },
   { href: '/income', label: 'Income', icon: TrendingUp },
+  { href: '/accounts', label: 'Accounts', icon: Landmark },
   { href: '/goals', label: 'Goals', icon: Target },
   { href: '/reports', label: 'Reports', icon: PiggyBank },
   { href: '/settings', label: 'Settings', icon: Settings },
