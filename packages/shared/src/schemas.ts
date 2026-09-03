@@ -24,6 +24,20 @@ export const minorAmount = z
   .nonnegative('Amount cannot be negative')
   .max(Number.MAX_SAFE_INTEGER);
 
+/**
+ * An amount that must actually be an amount.
+ *
+ * `minorAmount` permits zero, which is right for a savings balance or a budget
+ * line but wrong for a transaction: a zero-amount income source or expense is
+ * never something a person meant to record, and accepting one silently stores a
+ * row that displays as nothing. The forms already tell the user the figure must
+ * be above zero; this is what makes that true, on the server as well.
+ */
+export const positiveMinorAmount = minorAmount.refine(
+  (v) => v > 0,
+  'Enter an amount greater than zero',
+);
+
 export const signedMinorAmount = z.number().int().safe();
 
 export const currencyCode = z
@@ -133,7 +147,7 @@ export const incomeSourceSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     type: z.enum(INCOME_TYPES),
-    amountMinor: minorAmount,
+    amountMinor: positiveMinorAmount,
     currency: currencyCode,
     frequency: z.enum(FREQUENCIES),
     startDate: isoDate,
@@ -163,7 +177,7 @@ export const updateCategorySchema = categorySchema.partial().extend({
 });
 
 export const expenseSchema = z.object({
-  amountMinor: minorAmount,
+  amountMinor: positiveMinorAmount,
   currency: currencyCode,
   categoryId: uuid,
   date: isoDate,

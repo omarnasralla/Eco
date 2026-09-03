@@ -131,3 +131,51 @@ export function convertMinor(
   const converted = (major / fromRate) * toRate;
   return toMinorUnits(converted, to);
 }
+
+/**
+ * Parses an amount as a person actually types it.
+ *
+ * `Number("1,039")` is NaN, and treating that as zero is how a typed salary
+ * became a stored 0: the field still showed "1,039", so nothing looked wrong
+ * until the row displayed nothing. Grouping separators are ordinary in typed
+ * money, and phone keyboards in many locales put a comma on the decimal key.
+ *
+ * The ambiguity between "1,039" (grouped thousand) and "10,50" (European
+ * decimal) is resolved the way the notations themselves differ: a group is
+ * always exactly three digits, so a lone comma or dot followed by one or two
+ * digits at the end of the string is a decimal point, and anything else
+ * separating groups of three is a separator to drop.
+ *
+ * Returns null for input that cannot be read as a number, so a caller can say
+ * so rather than silently substituting zero.
+ */
+export function parseAmountInput(raw: string): number | null {
+  const trimmed = raw.trim().replace(/\s/g, '');
+  if (trimmed === '') return null;
+
+  // Anything that is not a digit, separator or leading sign is not an amount.
+  if (!/^[-+]?[\d.,]+$/.test(trimmed)) return null;
+
+  const sign = trimmed.startsWith('-') ? -1 : 1;
+  const digits = trimmed.replace(/^[-+]/, '');
+
+  const lastComma = digits.lastIndexOf(',');
+  const lastDot = digits.lastIndexOf('.');
+  const lastSeparator = Math.max(lastComma, lastDot);
+
+  let normalised: string;
+  if (lastSeparator === -1) {
+    normalised = digits;
+  } else {
+    const decimals = digits.length - lastSeparator - 1;
+    // One or two trailing digits after the final separator reads as a decimal
+    // fraction; three reads as a thousands group ("1,039").
+    const isDecimalPoint = decimals >= 1 && decimals <= 2;
+    normalised = isDecimalPoint
+      ? `${digits.slice(0, lastSeparator).replace(/[.,]/g, '')}.${digits.slice(lastSeparator + 1)}`
+      : digits.replace(/[.,]/g, '');
+  }
+
+  const value = Number(normalised);
+  return Number.isFinite(value) ? sign * value : null;
+}

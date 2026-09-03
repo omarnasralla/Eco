@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useId } from 'react';
 import {
   CURRENCIES,
+  parseAmountInput,
   convertMinor,
   currencyMeta,
   formatMoney,
@@ -149,9 +150,11 @@ export function MoneyField({
           className="flex-1"
           onChange={(event) => {
             const raw = event.target.value;
-            const next = Number(raw);
-            const usable =
-              raw.trim() !== '' && Number.isFinite(next) && (allowNegative || next > 0);
+            // Parsed the way people type money, not with bare Number(): a typed
+            // "1,039" is NaN to Number, and emitting 0 for it stored a salary as
+            // nothing while the field went on displaying "1,039".
+            const next = parseAmountInput(raw);
+            const usable = next !== null && (allowNegative || next > 0);
             onAmountChange(raw, usable ? toMinorUnits(next, currency) : 0);
           }}
         />
