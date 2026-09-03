@@ -388,8 +388,11 @@ model IncomeSource {
 model IncomeReceipt {
   id             String   @id @default(uuid()) @db.Uuid
   userId         String   @db.Uuid
-  incomeSourceId String   @db.Uuid
+  /// Null for a one-off payment that has no recurring schedule behind it.
+  incomeSourceId String?  @db.Uuid
   accountId      String?  @db.Uuid
+  /// Set for a standalone receipt; otherwise copied from the source.
+  name           String?  @db.VarChar(120)
   amountMinor    BigInt
   currency       String   @db.Char(3)
   /// Amount converted to the user's base currency at the receipt-date rate.
@@ -398,7 +401,7 @@ model IncomeReceipt {
   notes          String?  @db.Text
   createdAt      DateTime @default(now())
 
-  incomeSource IncomeSource      @relation(fields: [incomeSourceId], references: [id], onDelete: Cascade)
+  incomeSource IncomeSource?     @relation(fields: [incomeSourceId], references: [id], onDelete: Cascade)
   account      FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
   @@index([userId, date])

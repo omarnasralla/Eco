@@ -13,7 +13,10 @@ import {
   convertMinor,
   formatMoney,
   incomeSourceSchema,
+  parseAmountInput,
   toMajorUnits,
+  toMinorUnits,
+  type AccountDto,
   type IncomeSourceDto,
   type IncomeSourceInput,
 } from '@eco/shared';
@@ -80,6 +83,10 @@ function IncomeContent() {
 
   const [addOpen, setAddOpen] = useState(searchParams.get('new') === '1');
   const [editing, setEditing] = useState<IncomeSourceDto | null>(null);
+  const [receiptFor, setReceiptFor] = useState<IncomeSourceDto | null>(null);
+  const [oneOffOpen, setOneOffOpen] = useState(false);
+  const accounts = useQuery({ queryKey: queryKeys.accounts, queryFn: fetchers.accounts });
+  const receipts = useQuery({ queryKey: queryKeys.incomeReceipts, queryFn: fetchers.incomeReceipts });
 
   const income = useQuery({ queryKey: queryKeys.income, queryFn: fetchers.income });
   const summary = useQuery({ queryKey: queryKeys.incomeSummary, queryFn: fetchers.incomeSummary });
@@ -88,6 +95,11 @@ function IncomeContent() {
   // Income moves the savings rate, the budget headroom, the payoff plans and
   // the health score — invalidate the lot, not just this list.
   const refreshAll = () => void queryClient.invalidateQueries();
+
+  const removeReceipt = useMutation({
+    mutationFn: (id: string) => api.delete(`/income/receipts/${id}`),
+    onSuccess: refreshAll,
+  });
 
   /**
    * A source is denominated in its own currency, so it is shown in that one.
@@ -235,6 +247,15 @@ function IncomeContent() {
                         aria-hidden
                       />
                     </button>
+                    {/* Outside the row button, since a button cannot nest in
+                        one. This is the tap that turns a schedule into money:
+                        the source says what is expected, this says it arrived. */}
+                    <div className="flex justify-end px-4 pb-3 sm:px-6">
+                      <Button size="sm" variant="outline" onClick={() => setReceiptFor(source)}>
+                        <Plus className="size-4" aria-hidden />
+                        Record a payment
+                      </Button>
+                    </div>
                   </li>
                 );
               })}
@@ -242,6 +263,84 @@ function IncomeContent() {
           )}
         </CardContent>
       </Card>
+
+      <Card className="mt-4">
+        <CardHeader className="flex-row items-center justify-between gap-2 pb-2">
+          <div>
+            <CardTitle className="text-base">Received</CardTitle>
+            {/* The distinction the app previously left implicit, and which cost
+                a user an afternoon: a source is a forecast, a receipt is money. */}
+            <p className="text-xs text-muted-foreground">
+              Payments that actually landed. These move your account balances; the schedules above
+              do not.
+            </p>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => setOneOffOpen(true)}>
+            <Plus className="size-4" aria-hidden />
+            One-off
+          </Button>
+        </CardHeader>
+        <CardContent className="p-0">
+          {receipts.isLoading ? (
+            <Skeleton className="m-4 h-16" />
+          ) : (receipts.data?.length ?? 0) === 0 ? (
+            <p className="px-4 py-6 text-sm text-muted-foreground sm:px-6">
+              Nothing recorded yet. Use “Record a payment” on a source when it arrives, or “One-off”
+              for money with no schedule behind it.
+            </p>
+          ) : (
+            <ul className="divide-y">
+              {receipts.data!.map((receipt) => (
+                <li key={receipt.id} className="flex items-center gap-3 px-4 py-3 sm:px-6">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{receipt.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDate(receipt.date, locale)}
+                      {receipt.accountId ? '' : ' · not paid into a tracked account'}
+                    </p>
+                  </div>
+                  <p className="tabular shrink-0 text-sm font-semibold">
+                    {formatMoney(receipt.amountMinor, receipt.currency, { locale })}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label={`Remove ${receipt.name}`}
+                    onClick={() => removeReceipt.mutate(receipt.id)}
+                    disabled={removeReceipt.isPending}
+                  >
+                    <Trash2 className="size-4" aria-hidden />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <ReceiptDialog
+        key={receiptFor?.id ?? 'none'}
+        source={receiptFor}
+        accounts={accounts.data ?? []}
+        onClose={() => setReceiptFor(null)}
+        locale={locale}
+        onSaved={() => {
+          setReceiptFor(null);
+          refreshAll();
+        }}
+      />
+
+      <OneOffReceiptDialog
+        open={oneOffOpen}
+        onOpenChange={setOneOffOpen}
+        accounts={accounts.data ?? []}
+        baseCurrency={currency}
+        locale={locale}
+        onSaved={() => {
+          setOneOffOpen(false);
+          refreshAll();
+        }}
+      />
 
       <IncomeDialog
         open={addOpen}
@@ -606,5 +705,268 @@ export default function IncomePage() {
     <Suspense fallback={<Skeleton className="h-96 w-full" />}>
       <IncomeContent />
     </Suspense>
+  );
+}
+
+/** Shared by both receipt dialogs: where the money landed. */
+function AccountPicker({
+  accounts,
+  value,
+  onChange,
+}: {
+  accounts: AccountDto[];
+  value: string | null | undefined;
+  onChange: (next: string | null) => void;
+}) {
+  if (accounts.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <Label htmlFor="receipt-account">Paid into</Label>
+      <Select
+        value={value ?? 'none'}
+        onValueChange={(v) => {
+          // Radix emits '' while its items register; no item has that value.
+          if (!v) return;
+          onChange(v === 'none' ? null : v);
+        }}
+      >
+        <SelectTrigger id="receipt-account">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {accounts.map((account) => (
+            <SelectItem key={account.id} value={account.id}>
+              {account.name}
+            </SelectItem>
+          ))}
+          <SelectItem value="none">Not into a tracked account</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+/** Records a payment against an existing source. */
+function ReceiptDialog({
+  source,
+  accounts,
+  onClose,
+  locale,
+  onSaved,
+}: {
+  source: IncomeSourceDto | null;
+  accounts: AccountDto[];
+  onClose: () => void;
+  locale: string;
+  onSaved: () => void;
+}) {
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(today);
+  const [accountId, setAccountId] = useState<string | null | undefined>(undefined);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const primaryId = accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null;
+
+  useEffect(() => {
+    if (!source) return;
+    setFormError(null);
+    setDate(today());
+    // Prefilled with the scheduled figure, which is what most payments are.
+    setAmount(String(toMajorUnits(source.amountMinor, source.currency)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source?.id]);
+
+  useEffect(() => {
+    if (!primaryId) return;
+    setAccountId((current) => (current === undefined ? primaryId : current));
+  }, [primaryId]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.post(`/income/${source!.id}/receipts`, {
+        amountMinor: toMinorUnits(parseAmountInput(amount) ?? 0, source!.currency),
+        date,
+        accountId: accountId ?? null,
+      }),
+    onSuccess: onSaved,
+    onError: (error) =>
+      setFormError(error instanceof ApiError ? error.message : 'Could not record that payment.'),
+  });
+
+  if (!source) return null;
+
+  return (
+    <Dialog open onOpenChange={(next) => (next ? undefined : onClose())}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Record a payment</DialogTitle>
+          <DialogDescription>
+            From {source.name}. This is money that arrived, so it moves the balance of the account
+            it landed in.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="receipt-amount">Amount ({source.currency})</Label>
+            <Input
+              id="receipt-amount"
+              inputMode="decimal"
+              autoFocus
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="receipt-date">Date received</Label>
+            <Input id="receipt-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+
+          <AccountPicker accounts={accounts} value={accountId} onChange={setAccountId} />
+
+          {formError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {formError}
+            </p>
+          ) : null}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={save.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+            Record payment
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * A payment with no schedule behind it.
+ *
+ * The case this exists for: money that arrived once. Recording it as a source
+ * made it a recurring rate it is not, so it contributed nothing to the run rate
+ * and moved no balance — it landed nowhere at all.
+ */
+function OneOffReceiptDialog({
+  open,
+  onOpenChange,
+  accounts,
+  baseCurrency,
+  locale,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  accounts: AccountDto[];
+  baseCurrency: string;
+  locale: string;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [amount, setAmount] = useState('');
+  const [currency, setCurrency] = useEntryCurrency(baseCurrency);
+  const [date, setDate] = useState(today);
+  const [accountId, setAccountId] = useState<string | null | undefined>(undefined);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const primaryId = accounts.find((a) => a.isPrimary)?.id ?? accounts[0]?.id ?? null;
+
+  useEffect(() => {
+    if (!open) return;
+    setFormError(null);
+    setName('');
+    setAmount('');
+    setDate(today());
+  }, [open]);
+
+  useEffect(() => {
+    if (!primaryId) return;
+    setAccountId((current) => (current === undefined ? primaryId : current));
+  }, [primaryId]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.post('/income/receipts', {
+        name,
+        amountMinor: toMinorUnits(parseAmountInput(amount) ?? 0, currency),
+        currency,
+        date,
+        accountId: accountId ?? null,
+      }),
+    onSuccess: onSaved,
+    onError: (error) =>
+      setFormError(error instanceof ApiError ? error.message : 'Could not record that payment.'),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Record a one-off payment</DialogTitle>
+          <DialogDescription>
+            Money that arrived once, with no schedule behind it — a bonus, a refund, a gift. It
+            moves your balance without pretending to be a monthly rate.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="oneoff-name">What was it</Label>
+            <Input
+              id="oneoff-name"
+              placeholder="Bonus"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+
+          <MoneyField
+            id="oneoff-amount"
+            label="Amount"
+            amount={amount}
+            onAmountChange={(raw) => setAmount(raw)}
+            currency={currency}
+            onCurrencyChange={setCurrency}
+            baseCurrency={baseCurrency}
+            locale={locale}
+            autoFocus
+          />
+
+          <div className="space-y-2">
+            <Label htmlFor="oneoff-date">Date received</Label>
+            <Input
+              id="oneoff-date"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
+
+          <AccountPicker accounts={accounts} value={accountId} onChange={setAccountId} />
+
+          {formError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {formError}
+            </p>
+          ) : null}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={save.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+            Record payment
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

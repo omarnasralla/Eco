@@ -199,6 +199,7 @@ function AccountDialog({
   const editing = account !== undefined;
   const [balance, setBalance] = useState('');
   const [accountCurrency, setAccountCurrency] = useState(baseCurrency);
+  const [asOf, setAsOf] = useState(() => new Date().toISOString().slice(0, 10));
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -225,13 +226,16 @@ function AccountDialog({
     setFormError(null);
     setConfirmingDelete(false);
     if (account) {
-      setBalance(String(toMajorUnits(account.balanceMinor, account.currency)));
+      // The opening figure, not the derived balance: this field sets what the
+      // balance was on the date below, and the movements since rebuild it.
+      setBalance(String(toMajorUnits(account.openingBalanceMinor, account.currency)));
       setAccountCurrency(account.currency);
+      setAsOf(account.openingBalanceDate);
       reset({
         name: account.name,
         kind: account.kind,
         currency: account.currency,
-        balanceMinor: account.balanceMinor,
+        balanceMinor: account.openingBalanceMinor,
         isPrimary: account.isPrimary,
       });
     } else {
@@ -278,7 +282,7 @@ function AccountDialog({
         <form
           onSubmit={handleSubmit((values) => {
             setFormError(null);
-            save.mutate({ ...values, currency: accountCurrency });
+            save.mutate({ ...values, currency: accountCurrency, openingBalanceDate: asOf });
           })}
           className="space-y-4"
           noValidate
@@ -331,6 +335,21 @@ function AccountDialog({
                 : 'What is in it right now. Use a minus sign if you are overdrawn.'
             }
           />
+
+          <div className="space-y-2">
+            <Label htmlFor="account-as-of">Balance as at</Label>
+            <Input
+              id="account-as-of"
+              type="date"
+              value={asOf}
+              onChange={(e) => setAsOf(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Transactions from this date onward move the balance; anything earlier is taken as
+              already included in the figure above. Back-date it to let an existing history build
+              the balance up.
+            </p>
+          </div>
 
           <label className="flex items-center gap-2 text-sm">
             <input

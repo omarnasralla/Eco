@@ -415,6 +415,13 @@ export const accountSchema = z.object({
    * to see the one they cannot enter.
    */
   balanceMinor: signedMinorAmount,
+  /**
+   * The date that balance was true. Transactions from this date onward move it;
+   * anything earlier is taken as already reflected in the figure. Defaults to
+   * today, but can be back-dated so an existing ledger builds the balance up
+   * rather than being ignored.
+   */
+  openingBalanceDate: isoDate.optional(),
   isPrimary: z.boolean().default(false),
 });
 
@@ -422,3 +429,26 @@ export const updateAccountSchema = accountSchema.partial();
 
 export type AccountInput = z.infer<typeof accountSchema>;
 export type UpdateAccountInput = z.infer<typeof updateAccountSchema>;
+
+/* ── Income receipts ──────────────────────────────────────── */
+
+/** Recording a payment against an existing source. */
+export const incomeReceiptSchema = z.object({
+  amountMinor: positiveMinorAmount,
+  date: isoDate,
+  /** Where the money landed. Null moves no balance. */
+  accountId: uuid.nullish(),
+  notes: z.string().trim().max(500).nullish(),
+});
+
+/**
+ * A one-off payment with no schedule behind it, so it carries its own name and
+ * currency rather than borrowing a source's.
+ */
+export const standaloneReceiptSchema = incomeReceiptSchema.extend({
+  name: z.string().trim().min(1).max(120),
+  currency: currencyCode,
+});
+
+export type IncomeReceiptInput = z.infer<typeof incomeReceiptSchema>;
+export type StandaloneReceiptInput = z.infer<typeof standaloneReceiptSchema>;

@@ -146,8 +146,10 @@ export class ReportsService {
       })),
       income: income.map((r) => ({
         date: requireIsoDate(r.date),
-        source: r.incomeSource.name,
-        type: r.incomeSource.type,
+        // A one-off payment has no schedule behind it, so it carries its own
+        // name and has no type to report.
+        source: r.incomeSource?.name ?? r.name ?? 'One-off payment',
+        type: r.incomeSource?.type ?? 'ONE_TIME',
         amountMinor: toNumber(r.baseAmountMinor),
       })),
       debts: debts.map((d) => ({

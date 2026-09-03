@@ -511,3 +511,26 @@ export interface AccountsSummaryDto {
   unconvertedCount: number;
   accounts: AccountDto[];
 }
+
+/**
+ * A payment that actually arrived.
+ *
+ * Distinct from an income source, which is a schedule and creates no money: a
+ * source says "£3,000 lands monthly" and drives the run rate, while a receipt
+ * says "£3,000 landed on the 28th" and moves an account balance. A one-off
+ * payment is a receipt with no source behind it, because inventing a permanent
+ * schedule for something that happened once makes it a rate it is not.
+ */
+export interface IncomeReceiptDto {
+  id: string;
+  name: string;
+  incomeSourceId: string | null;
+  accountId: string | null;
+  amountMinor: number;
+  currency: string;
+  /** Converted at the receipt-date rate and frozen, as expenses are. */
+  baseAmountMinor: number;
+  date: string;
+  notes: string | null;
+  createdAt: string;
+}

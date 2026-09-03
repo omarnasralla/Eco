@@ -16,9 +16,11 @@ import { z } from 'zod';
 import {
   incomeSourceSchema,
   isoDate,
-  minorAmount,
+  incomeReceiptSchema,
+  standaloneReceiptSchema,
   updateIncomeSourceSchema,
-  uuid,
+  type IncomeReceiptInput,
+  type StandaloneReceiptInput,
   type IncomeSourceInput,
 } from '@eco/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -26,13 +28,8 @@ import { Audit } from '../../common/decorators/audit.decorator';
 import { zodBody } from '../../common/pipes/zod-validation.pipe';
 import { IncomeService } from './income.service';
 
-const receiptSchema = z.object({
-  amountMinor: minorAmount,
-  date: isoDate,
-  /** Which account the money landed in. Null moves no balance. */
-  accountId: uuid.nullish(),
-  notes: z.string().trim().max(500).nullish(),
-});
+// receipt shapes live in @eco/shared, so the API and the form validate the
+// same rules rather than two copies that drift.
 
 @ApiTags('income')
 @Controller('income')
@@ -57,6 +54,36 @@ export class IncomeController {
     };
   }
 
+  // Declared above @Get(':id'): Nest matches in declaration order, so with the
+  // parameterised route first, /income/receipts was read as an id and rejected
+  // by ParseUUIDPipe with a 400.
+  @Get('receipts')
+  @ApiOperation({ summary: 'Payments actually received, newest first' })
+  async listReceipts(@CurrentUser('id') userId: string) {
+    return this.income.listReceipts(userId);
+  }
+
+  @Post('receipts')
+  @Audit('CREATE', 'IncomeReceipt')
+  @ApiOperation({ summary: 'Record a one-off payment with no schedule behind it' })
+  async recordStandalone(
+    @CurrentUser() user: { id: string; currency: string },
+    @Body(zodBody(standaloneReceiptSchema)) dto: StandaloneReceiptInput,
+  ) {
+    return this.income.recordStandaloneReceipt(user.id, dto, user.currency);
+  }
+
+  @Delete('receipts/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Audit('DELETE', 'IncomeReceipt')
+  @ApiOperation({ summary: 'Remove a payment recorded in error' })
+  async removeReceipt(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    await this.income.removeReceipt(userId, id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get one income source' })
   async findOne(@CurrentUser('id') userId: string, @Param('id', ParseUUIDPipe) id: string) {
@@ -79,13 +106,7 @@ export class IncomeController {
   async recordReceipt(
     @CurrentUser() user: { id: string; currency: string },
     @Param('id', ParseUUIDPipe) id: string,
-    @Body(zodBody(receiptSchema))
-    dto: {
-      amountMinor: number;
-      date: string;
-      accountId?: string | null;
-      notes?: string | null;
-    },
+    @Body(zodBody(incomeReceiptSchema)) dto: IncomeReceiptInput,
   ) {
     return this.income.recordReceipt(user.id, id, dto, user.currency);
   }

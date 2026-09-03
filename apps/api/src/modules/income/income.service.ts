@@ -1,12 +1,46 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { toMonthlyMinor } from '@eco/core';
-import type { IncomeSourceDto, IncomeSourceInput } from '@eco/shared';
+import type {
+  IncomeReceiptDto,
+  IncomeSourceDto,
+  IncomeSourceInput,
+  StandaloneReceiptInput,
+} from '@eco/shared';
 import type { IncomeSource } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { CurrencyService } from '../currency/currency.service';
 import { toNumber } from '../../common/utils/money';
 import { fromIsoDate, requireIsoDate, toIsoDate, todayIso } from '../../common/utils/dates';
+
+function toReceiptDto(
+  receipt: {
+    id: string;
+    name: string | null;
+    incomeSourceId: string | null;
+    accountId: string | null;
+    amountMinor: bigint;
+    currency: string;
+    baseAmountMinor: bigint;
+    date: Date;
+    notes: string | null;
+    createdAt: Date;
+  },
+  sourceName: string | null,
+): IncomeReceiptDto {
+  return {
+    id: receipt.id,
+    name: receipt.name ?? sourceName ?? 'Payment',
+    incomeSourceId: receipt.incomeSourceId,
+    accountId: receipt.accountId,
+    amountMinor: toNumber(receipt.amountMinor),
+    currency: receipt.currency,
+    baseAmountMinor: toNumber(receipt.baseAmountMinor),
+    date: requireIsoDate(receipt.date),
+    notes: receipt.notes,
+    createdAt: receipt.createdAt.toISOString(),
+  };
+}
 
 function toDto(source: IncomeSource): IncomeSourceDto {
   const amountMinor = toNumber(source.amountMinor);
@@ -169,11 +203,66 @@ export class IncomeService {
     });
 
     await this.redis.invalidateUser(userId);
-    return {
-      id: receipt.id,
-      amountMinor: toNumber(receipt.amountMinor),
-      date: requireIsoDate(receipt.date),
-    };
+    return toReceiptDto(receipt, source.name);
+  }
+
+  /**
+   * A payment with no schedule behind it.
+   *
+   * Recording a one-off as an income *source* made it a rate it is not: it
+   * contributes nothing to the run rate, correctly, and so the money landed
+   * nowhere. As a receipt it does the one thing it should — move the balance of
+   * the account it landed in.
+   */
+  async recordStandaloneReceipt(
+    userId: string,
+    input: StandaloneReceiptInput,
+    userCurrency: string,
+  ): Promise<IncomeReceiptDto> {
+    if (input.accountId) {
+      const owned = await this.prisma.financialAccount.count({
+        where: { id: input.accountId, userId, deletedAt: null },
+      });
+      if (owned === 0) throw new NotFoundException('Account not found');
+    }
+
+    const receipt = await this.prisma.incomeReceipt.create({
+      data: {
+        userId,
+        incomeSourceId: null,
+        name: input.name,
+        accountId: input.accountId ?? null,
+        amountMinor: BigInt(input.amountMinor),
+        currency: input.currency,
+        baseAmountMinor: BigInt(
+          await this.currency.convert(input.amountMinor, input.currency, userCurrency, input.date),
+        ),
+        date: fromIsoDate(input.date),
+        notes: input.notes ?? null,
+      },
+    });
+
+    await this.redis.invalidateUser(userId);
+    return toReceiptDto(receipt, input.name);
+  }
+
+  /** Payments actually received, newest first. */
+  async listReceipts(userId: string, limit = 50): Promise<IncomeReceiptDto[]> {
+    const receipts = await this.prisma.incomeReceipt.findMany({
+      where: { userId },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+      take: limit,
+      include: { incomeSource: { select: { name: true } } },
+    });
+    return receipts.map((r) => toReceiptDto(r, r.incomeSource?.name ?? null));
+  }
+
+  async removeReceipt(userId: string, id: string): Promise<void> {
+    // Hard delete: a receipt is a record of a payment, and an entry made in
+    // error should leave nothing behind moving a balance it never should have.
+    const { count } = await this.prisma.incomeReceipt.deleteMany({ where: { id, userId } });
+    if (count === 0) throw new NotFoundException('Receipt not found');
+    await this.redis.invalidateUser(userId);
   }
 
   /** Monthly run rate across every active stream, in the user's base currency. */

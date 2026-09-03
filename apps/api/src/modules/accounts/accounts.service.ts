@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { CurrencyService } from '../currency/currency.service';
 import { toNumber } from '../../common/utils/money';
+import { fromIsoDate } from '../../common/utils/dates';
 
 function toDto(account: FinancialAccount, balanceMinor: number, movements: number): AccountDto {
   return {
@@ -180,7 +181,9 @@ export class AccountsService {
           kind: input.kind,
           currency: input.currency,
           openingBalanceMinor: BigInt(input.balanceMinor),
-          openingBalanceDate: new Date(),
+          openingBalanceDate: input.openingBalanceDate
+            ? fromIsoDate(input.openingBalanceDate)
+            : new Date(),
           // The first account is primary whether or not the box was ticked:
           // one account and no primary is a state with no useful meaning.
           isPrimary: input.isPrimary || isFirst,
@@ -211,8 +214,25 @@ export class AccountsService {
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.kind !== undefined ? { kind: input.kind } : {}),
           ...(input.currency !== undefined ? { currency: input.currency } : {}),
+          // A balance sent with a date and a balance sent alone are different
+          // statements, and conflating them produced a nonsense figure:
+          // back-dating to "0 as of 1 August" was read as "it is 0 now" and
+          // solved the opening to minus the month's income.
+          //
+          //   with a date — "on that day it was X" — X is the opening itself
+          //   without one — "it is X now"        — solve for the opening that
+          //                                        makes today's figure X
+          ...(input.openingBalanceDate !== undefined
+            ? { openingBalanceDate: fromIsoDate(input.openingBalanceDate) }
+            : {}),
           ...(input.balanceMinor !== undefined
-            ? { openingBalanceMinor: BigInt(await this.openingFor(existing, input.balanceMinor)) }
+            ? {
+                openingBalanceMinor: BigInt(
+                  input.openingBalanceDate !== undefined
+                    ? input.balanceMinor
+                    : await this.openingFor(existing, input.balanceMinor),
+                ),
+              }
             : {}),
           ...(input.isPrimary !== undefined ? { isPrimary: input.isPrimary } : {}),
         },

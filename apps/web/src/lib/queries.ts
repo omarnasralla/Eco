@@ -2,6 +2,7 @@
 
 import type {
   AccountDto,
+  IncomeReceiptDto,
   AccountsSummaryDto,
   AdminStats,
   AdminUserDetail,
@@ -48,6 +49,7 @@ export const queryKeys = {
   goalContributions: (id: string) => ['goals', id, 'contributions'] as const,
   budget: (month: string) => ['budgets', month] as const,
   accounts: ['accounts'] as const,
+  incomeReceipts: ['income', 'receipts'] as const,
   accountsSummary: ['accounts', 'summary'] as const,
   budgetSuggestion: (month: string) => ['budgets', 'suggest', month] as const,
   adminStats: ['admin', 'stats'] as const,
@@ -66,6 +68,8 @@ export const queryKeys = {
 
 export const fetchers = {
   accounts: () => api.get<AccountDto[]>('/accounts'),
+
+  incomeReceipts: () => api.get<IncomeReceiptDto[]>('/income/receipts'),
 
   accountsSummary: () => api.get<AccountsSummaryDto>('/accounts/summary'),
 
