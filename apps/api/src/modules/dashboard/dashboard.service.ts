@@ -51,7 +51,7 @@ export class DashboardService {
       const [
         expensesThis,
         expensesPrev,
-        monthlyIncome,
+        incomeByMonth,
         totalDebt,
         totalSavings,
         totalCash,
@@ -60,7 +60,11 @@ export class DashboardService {
       ] = await Promise.all([
         this.totalExpenses(userId, targetMonth),
         this.totalExpenses(userId, previousMonth),
-        this.income.monthlyTotal(userId, userCurrency),
+        // What each month actually earned, not a run rate: a one-off payment,
+        // a bonus or an irregular invoice is income, and reporting zero for a
+        // month that paid the rent is simply wrong. Both months come back in
+        // one pass so the month-over-month delta costs no extra queries.
+        this.income.incomeByMonth(userId, userCurrency, [previousMonth, targetMonth]),
         this.totalDebt(userId, userCurrency),
         this.goals.totalSaved(userId, userCurrency),
         this.accounts.totalBalance(userId, userCurrency),
@@ -68,7 +72,9 @@ export class DashboardService {
         this.upcomingBills(userId, 14),
       ]);
 
-      const netCashFlowMinor = monthlyIncome - expensesThis;
+      const incomeThis = incomeByMonth.get(targetMonth) ?? 0;
+      const incomePrev = incomeByMonth.get(previousMonth) ?? 0;
+      const netCashFlowMinor = incomeThis - expensesThis;
 
       // The savings rate is a trailing average over complete months, never the
       // month in progress.
@@ -87,8 +93,16 @@ export class DashboardService {
       const averageExpenses = Math.round(
         basisExpenses.reduce((sum, value) => sum + value, 0) / basisExpenses.length,
       );
+      // Income is averaged over the same three months as expenses. Now that it
+      // varies month to month, holding one side to a single month and the other
+      // to a trailing average would compare unlike things — a month that
+      // happened to carry a bonus would read as a spectacular saver.
+      const basisIncome = await this.income.incomeByMonth(userId, userCurrency, basisMonths);
+      const averageIncome = Math.round(
+        basisMonths.reduce((sum, m) => sum + (basisIncome.get(m) ?? 0), 0) / basisMonths.length,
+      );
       const savingsRateBasisMonth = `${basisMonths.at(-1)} to ${basisMonths[0]}`;
-      const savingsRatePctValue = savingsRatePct(monthlyIncome, averageExpenses);
+      const savingsRatePctValue = savingsRatePct(averageIncome, averageExpenses);
 
       // Cash in accounts, plus what is set aside in goals, less what is owed.
       // Cash belongs here because it is the part of net worth a person can
@@ -105,17 +119,18 @@ export class DashboardService {
       return {
         currency: userCurrency,
         period: { from: `${targetMonth}-01`, to: this.endOfMonth(targetMonth) },
-        totalIncomeMinor: monthlyIncome,
+        totalIncomeMinor: incomeThis,
         totalExpensesMinor: expensesThis,
         netCashFlowMinor,
         savingsRatePct: savingsRatePctValue,
         savingsRateBasisMonth,
+        savingsRateBasisIncomeMinor: averageIncome,
         totalDebtMinor: totalDebt,
         totalSavingsMinor: totalSavings,
         totalCashMinor: totalCash,
         netWorthMinor,
         deltas: {
-          incomePct: 0, // Income is a run rate, so month-over-month is flat by construction.
+          incomePct: this.percentChange(incomePrev, incomeThis),
           expensesPct: this.percentChange(expensesPrev, expensesThis),
           netWorthPct: 0,
         },
@@ -148,15 +163,21 @@ export class DashboardService {
       `;
 
       const expenseByMonth = new Map(rows.map((r) => [r.month, toNumber(r.total)]));
-      const monthlyIncome = await this.income.monthlyTotal(userId, userCurrency);
+      const window = monthRange(`${from}-01`, `${thisMonth}-28`);
 
-      return monthRange(`${from}-01`, `${thisMonth}-28`).map((m) => {
+      // Income per month, not one run rate repeated across the chart. A flat
+      // line cannot show a bonus, a gap between contracts, or a month with
+      // three paycheques — which is most of what an income trend is for.
+      const incomeByMonth = await this.income.incomeByMonth(userId, userCurrency, window);
+
+      return window.map((m) => {
         const expensesMinor = expenseByMonth.get(m) ?? 0;
+        const incomeMinor = incomeByMonth.get(m) ?? 0;
         return {
           month: m,
-          incomeMinor: monthlyIncome,
+          incomeMinor,
           expensesMinor,
-          netMinor: monthlyIncome - expensesMinor,
+          netMinor: incomeMinor - expensesMinor,
         };
       });
     });

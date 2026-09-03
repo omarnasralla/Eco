@@ -79,9 +79,10 @@ export default function DashboardPage() {
         <StatTile
           label="Income"
           valueMinor={data?.totalIncomeMinor ?? 0}
+          deltaPct={data?.deltas.incomePct}
           icon={TrendingUp}
           loading={summary.isLoading}
-          hint="Monthly run rate"
+          hint="Received or due this month"
         />
         <StatTile
           label="Spent this month"
@@ -137,7 +138,12 @@ export default function DashboardPage() {
                 ? 'Comfortably above the 20% benchmark — this is what builds a buffer.'
                 : data.savingsRatePct > 0
                   ? 'Positive, but under the 20% many aim for. Small, steady cuts move this fastest.'
-                  : 'You are spending more than you earn this month. Worth a look at your budget.'}
+                  : data.savingsRateBasisIncomeMinor === 0
+                    ? // A rate of zero means "nothing to divide by" as often as it
+                      // means overspending, and telling someone who recorded no
+                      // income that they spent too much is simply a wrong statement.
+                      'No income recorded over these three months, so there is no rate to compute yet.'
+                    : 'You spent more than you earned over these three months. Worth a look at your budget.'}
             </p>
           </CardContent>
         </Card>

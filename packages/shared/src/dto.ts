@@ -234,17 +234,34 @@ export interface UpcomingBillDto {
 export interface DashboardSummaryDto {
   currency: string;
   period: { from: string; to: string };
+  /**
+   * What this month earned — payments actually received, plus anything still
+   * expected from a recurring source that has not been receipted yet.
+   *
+   * Not a run rate. A one-off payment, a bonus or an irregular invoice counts
+   * in the month it lands, so someone paid irregularly is no longer reported
+   * as earning nothing.
+   */
   totalIncomeMinor: number;
   totalExpensesMinor: number;
   netCashFlowMinor: number;
   /**
-   * Averaged over the last three complete months. A month in progress cannot
-   * have a meaningful rate, and a single month is too noisy — one holiday
-   * would swing the headline by fifty points.
+   * Averaged over the last three complete months — both sides of it, income
+   * and expenses alike. A month in progress cannot have a meaningful rate, and
+   * a single month is too noisy: one holiday, or one bonus, would swing the
+   * headline by fifty points.
    */
   savingsRatePct: number;
   /** Human-readable basis, e.g. "2026-06 to 2026-08". */
   savingsRateBasisMonth: string;
+  /**
+   * Average monthly income over that basis window.
+   *
+   * Carried so the page can tell "spent more than earned" from "no income on
+   * record" — `savingsRatePct` reports 0 for both, and telling someone who
+   * earned nothing that they overspent is a different, wrong statement.
+   */
+  savingsRateBasisIncomeMinor: number;
   totalDebtMinor: number;
   totalSavingsMinor: number;
   /** Cash across all accounts, in the base currency. */

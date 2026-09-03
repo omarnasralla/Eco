@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { toMonthlyMinor } from '@eco/core';
+import { addMonths, expectedIncomeInMonth, toMonthlyMinor } from '@eco/core';
 import type {
   IncomeReceiptDto,
   IncomeSourceDto,
@@ -11,7 +11,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { CurrencyService } from '../currency/currency.service';
 import { toNumber } from '../../common/utils/money';
-import { fromIsoDate, requireIsoDate, toIsoDate, todayIso } from '../../common/utils/dates';
+import {
+  fromIsoDate,
+  monthToDate,
+  requireIsoDate,
+  toIsoDate,
+  todayIso,
+} from '../../common/utils/dates';
 
 function toReceiptDto(
   receipt: {
@@ -263,6 +269,104 @@ export class IncomeService {
     const { count } = await this.prisma.incomeReceipt.deleteMany({ where: { id, userId } });
     if (count === 0) throw new NotFoundException('Receipt not found');
     await this.redis.invalidateUser(userId);
+  }
+
+  /**
+   * What each of `months` actually earned, in the user's base currency.
+   *
+   * The run rate below answers "what do you earn per month"; this answers "what
+   * came in during August", and they are different questions. A person paid
+   * once, or irregularly, has a run rate of zero and is not living on zero —
+   * which is exactly what the dashboard used to claim.
+   *
+   * Two sources of truth, in priority order:
+   *
+   *   1. Receipts — money that actually arrived, dated when it arrived. This is
+   *      the only way a one-off payment or an untracked windfall counts at all.
+   *   2. Sources with no receipt in that month — still expected, so a salaried
+   *      user who never records receipts sees their salary rather than nothing.
+   *
+   * A source that *has* been receipted in a month is skipped: the receipt is
+   * the actual figure, and counting both would report a doubled salary. Pay
+   * dates come from `expectedIncomeInMonth`, so a one-off lands only in its own
+   * month and a three-paycheque month reads as three paycheques.
+   *
+   * One honest limitation: a deleted source stops counting in past months too,
+   * because a soft delete records no date. Receipts are unaffected, which is
+   * the other reason recording them is worth it.
+   */
+  async incomeByMonth(
+    userId: string,
+    userCurrency: string,
+    months: string[],
+  ): Promise<Map<string, number>> {
+    const totals = new Map<string, number>(months.map((m) => [m, 0]));
+    if (months.length === 0) return totals;
+
+    const sorted = [...months].sort();
+    const windowStart = monthToDate(sorted[0]!);
+    // Exclusive upper bound: the first day of the month after the last one.
+    const windowEnd = monthToDate(addMonths(sorted.at(-1)!, 1));
+
+    const [receipts, sources] = await Promise.all([
+      this.prisma.incomeReceipt.findMany({
+        where: { userId, date: { gte: windowStart, lt: windowEnd } },
+        select: { amountMinor: true, currency: true, date: true, incomeSourceId: true },
+      }),
+      this.prisma.incomeSource.findMany({ where: { userId, deletedAt: null } }),
+    ]);
+
+    // Which sources are already accounted for by a real payment, per month.
+    const receiptedByMonth = new Map<string, Set<string>>();
+
+    for (const receipt of receipts) {
+      const month = requireIsoDate(receipt.date).slice(0, 7);
+      if (!totals.has(month)) continue;
+      if (receipt.incomeSourceId) {
+        const seen = receiptedByMonth.get(month) ?? new Set<string>();
+        seen.add(receipt.incomeSourceId);
+        receiptedByMonth.set(month, seen);
+      }
+      totals.set(
+        month,
+        totals.get(month)! +
+          (await this.currency.convertForDisplay(
+            toNumber(receipt.amountMinor),
+            receipt.currency,
+            userCurrency,
+          )),
+      );
+    }
+
+    for (const month of months) {
+      const receipted = receiptedByMonth.get(month);
+      for (const source of sources) {
+        if (receipted?.has(source.id)) continue;
+        const expected = expectedIncomeInMonth(
+          {
+            amountMinor: toNumber(source.amountMinor),
+            frequency: source.frequency as Parameters<typeof expectedIncomeInMonth>[0]['frequency'],
+            startDate: requireIsoDate(source.startDate),
+            endDate: toIsoDate(source.endDate),
+            isActive: source.isActive,
+          },
+          month,
+        );
+        if (expected === 0) continue;
+        totals.set(
+          month,
+          totals.get(month)! +
+            (await this.currency.convertForDisplay(expected, source.currency, userCurrency)),
+        );
+      }
+    }
+
+    return totals;
+  }
+
+  /** What a single month earned. */
+  async incomeInMonth(userId: string, userCurrency: string, month: string): Promise<number> {
+    return (await this.incomeByMonth(userId, userCurrency, [month])).get(month) ?? 0;
   }
 
   /** Monthly run rate across every active stream, in the user's base currency. */
