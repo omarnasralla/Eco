@@ -4,6 +4,9 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  Check,
+  Copy,
+  KeyRound,
   LockOpen,
   LogOut,
   RotateCcw,
@@ -12,7 +15,12 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import { USER_ROLES, type AdminUserRow, type UserRole } from '@eco/shared';
+import {
+  USER_ROLES,
+  type AdminPasswordResetDto,
+  type AdminUserRow,
+  type UserRole,
+} from '@eco/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -38,6 +46,12 @@ export default function AdminPage() {
   const [status, setStatus] = useState<string>('all');
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  // Held in component state and nowhere else. The link is a working credential
+  // until it is used, so it is shown once, on the row it belongs to, and is
+  // gone on the next navigation.
+  const [resetLink, setResetLink] = useState<{ id: string; reset: AdminPasswordResetDto } | null>(
+    null,
+  );
 
   const isAdmin = user?.role === 'ADMIN';
 
@@ -67,7 +81,12 @@ export default function AdminPage() {
       if (input.action === 'patch') return api.patch(`/admin/users/${input.id}`, input.body);
       return api.post(`/admin/users/${input.id}/${input.action}`, {});
     },
-    onSuccess: refresh,
+    onSuccess: (data, input) => {
+      if (input.action === 'reset-password') {
+        setResetLink({ id: input.id, reset: data as AdminPasswordResetDto });
+      }
+      refresh();
+    },
     onError: (e: unknown) => setError(e instanceof Error ? e.message : 'That did not work.'),
   });
 
@@ -165,10 +184,13 @@ export default function AdminPage() {
               isSelf={row.id === user?.id}
               busy={act.isPending}
               confirmingDelete={confirmDelete === row.id}
+              resetLink={resetLink?.id === row.id ? resetLink.reset : null}
+              onDismissReset={() => setResetLink(null)}
               onConfirmDelete={() => setConfirmDelete(row.id)}
               onCancelDelete={() => setConfirmDelete(null)}
               onAct={(action, body) => {
                 setConfirmDelete(null);
+                setResetLink(null);
                 act.mutate({ id: row.id, action, body });
               }}
             />
@@ -190,6 +212,8 @@ function UserRow({
   isSelf,
   busy,
   confirmingDelete,
+  resetLink,
+  onDismissReset,
   onConfirmDelete,
   onCancelDelete,
   onAct,
@@ -198,6 +222,8 @@ function UserRow({
   isSelf: boolean;
   busy: boolean;
   confirmingDelete: boolean;
+  resetLink: AdminPasswordResetDto | null;
+  onDismissReset: () => void;
   onConfirmDelete: () => void;
   onCancelDelete: () => void;
   onAct: (action: string, body?: unknown) => void;
@@ -264,6 +290,18 @@ function UserRow({
               size="sm"
               variant="outline"
               disabled={busy}
+              onClick={() => onAct('reset-password')}
+              title="Issue a one-hour link that lets them set a new password"
+            >
+              <KeyRound className="mr-1 h-3.5 w-3.5" /> Reset password
+            </Button>
+          ) : null}
+
+          {!deleted ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
               onClick={() => onAct('force-logout')}
               title="Sign this account out of every device"
             >
@@ -302,7 +340,70 @@ function UserRow({
           )}
         </div>
       </div>
+
+      {resetLink ? <ResetLinkPanel reset={resetLink} onDismiss={onDismissReset} /> : null}
     </li>
+  );
+}
+
+/**
+ * The issued link, shown once.
+ *
+ * Anyone holding this URL can set the account's password, so it is never
+ * written to a query cache or the address bar — it lives in component state
+ * until the administrator dismisses it or leaves the page.
+ */
+function ResetLinkPanel({
+  reset,
+  onDismiss,
+}: {
+  reset: AdminPasswordResetDto;
+  onDismiss: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(reset.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access is refused without HTTPS in some browsers, and this
+      // deployment is plain HTTP — the URL is on screen to select by hand.
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-md border border-primary/40 bg-primary/5 p-3">
+      <p className="text-sm font-medium">Password reset link</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {reset.emailSent
+          ? 'Emailed to the address on the account. '
+          : 'The email could not be sent, so this link is the only copy. '}
+        It works once, expires {new Date(reset.expiresAt).toLocaleTimeString()}, and lets them
+        choose their own password — you never see it.
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1.5 text-xs">
+          {reset.url}
+        </code>
+        <Button size="sm" variant="outline" onClick={copy}>
+          {copied ? (
+            <>
+              <Check className="mr-1 h-3.5 w-3.5" /> Copied
+            </>
+          ) : (
+            <>
+              <Copy className="mr-1 h-3.5 w-3.5" /> Copy
+            </>
+          )}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onDismiss}>
+          Done
+        </Button>
+      </div>
+    </div>
   );
 }
 

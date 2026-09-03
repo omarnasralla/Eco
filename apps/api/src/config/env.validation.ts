@@ -23,7 +23,7 @@ export const envSchema = z
     API_HOST: z.string().min(1).default('0.0.0.0'),
     API_GLOBAL_PREFIX: z.string().default('eco/api/v1'),
     CORS_ORIGINS: z.string().default('http://localhost:3000'),
-    WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
+    WEB_ORIGIN: z.string().url().default('http://localhost:3000/eco/app'),
 
     DATABASE_URL: z.string().url(),
     REDIS_URL: z.string().url(),

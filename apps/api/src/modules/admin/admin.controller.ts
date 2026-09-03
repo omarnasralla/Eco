@@ -78,6 +78,16 @@ export class AdminController {
     return this.admin.unlockUser(actorId, id, context(req));
   }
 
+  @Post('users/:id/reset-password')
+  @ApiOperation({ summary: 'Issue a single-use password-reset link for an account' })
+  async resetPassword(
+    @CurrentUser('id') actorId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request,
+  ) {
+    return this.admin.issuePasswordReset(actorId, id, context(req));
+  }
+
   @Post('users/:id/force-logout')
   @ApiOperation({ summary: 'Revoke every session for the account' })
   async forceLogout(

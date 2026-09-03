@@ -448,6 +448,23 @@ export interface AdminUserDetail extends AdminUserRow {
   }>;
 }
 
+/**
+ * A password-reset link an administrator issued on someone else's behalf.
+ *
+ * The link is returned to the administrator rather than only emailed, because
+ * the person who needs it is usually the one who cannot receive the email —
+ * wrong address, dead mailbox, or a deployment with no outbound mail at all.
+ * It is shown once and never stored: the console holds it in component state,
+ * and only the hash of the token reaches the database.
+ */
+export interface AdminPasswordResetDto {
+  /** Single-use, and valid until `expiresAt`. */
+  url: string;
+  expiresAt: string;
+  /** False when the deployment has no working mail transport. */
+  emailSent: boolean;
+}
+
 export interface AdminStats {
   users: {
     total: number;

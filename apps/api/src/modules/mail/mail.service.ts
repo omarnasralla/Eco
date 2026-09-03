@@ -35,12 +35,20 @@ export class MailService {
     });
   }
 
-  private async send(to: string, subject: string, html: string, text: string): Promise<void> {
+  /**
+   * Returns whether delivery was accepted by the transport. Failures are still
+   * swallowed rather than thrown — a user who cannot receive a notice should
+   * still get a working API response — but a caller that needs to *tell* them
+   * the email did not go out can now ask.
+   */
+  private async send(to: string, subject: string, html: string, text: string): Promise<boolean> {
     try {
       await this.transporter.sendMail({ from: this.from, to, subject, html, text });
       this.logger.debug(`Sent "${subject}" to ${to}`);
+      return true;
     } catch (error) {
       this.logger.error(`Failed to send "${subject}" to ${to}: ${(error as Error).message}`);
+      return false;
     }
   }
 
@@ -78,8 +86,8 @@ export class MailService {
     );
   }
 
-  async sendPasswordResetEmail(to: string, name: string, url: string): Promise<void> {
-    await this.send(
+  async sendPasswordResetEmail(to: string, name: string, url: string): Promise<boolean> {
+    return this.send(
       to,
       'Reset your Eco password',
       this.layout(

@@ -1,9 +1,23 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import type { AdminStats, AdminUpdateUserInput, AdminUserDetail, AdminUserRow, AdminUserQuery, Paginated } from '@eco/shared';
+import type {
+  AdminPasswordResetDto,
+  AdminStats,
+  AdminUpdateUserInput,
+  AdminUserDetail,
+  AdminUserRow,
+  AdminUserQuery,
+  Paginated,
+} from '@eco/shared';
 import type { Prisma, User } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
+import { generateToken, hashToken } from '../../common/utils/crypto';
 import { AuditService } from '../audit/audit.service';
+import { MailService } from '../mail/mail.service';
+
+/** Matches the self-service reset window, so both links behave the same. */
+const RESET_TTL_MS = 60 * 60_000;
 
 /** Everything the console needs about an account, and nothing it must never see. */
 const USER_SELECT = {
@@ -60,6 +74,8 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly audit: AuditService,
+    private readonly mail: MailService,
+    private readonly config: ConfigService,
   ) {}
 
   async stats(): Promise<AdminStats> {
@@ -284,6 +300,69 @@ export class AdminService {
     await this.afterMutation(actorId, id, 'DELETE', context, { email: target.email });
   }
 
+  /**
+   * Issues a password-reset link for someone else's account.
+   *
+   * The link is the same single-use token the self-service flow mints, so it
+   * lands on the same `/reset-password` page and goes through the same
+   * `resetPassword` handler — which is what revokes the sessions and clears the
+   * lockout, on use. Nothing here changes the password: an administrator who
+   * could *set* one could then sign in as that person and act as them, and the
+   * audit log would show only the reset. Handing over a link the account holder
+   * has to complete keeps the password known to them alone.
+   *
+   * The URL is returned as well as emailed, because the person who needs it is
+   * usually the one whose email is not reaching them — and this deployment has
+   * no outbound mail at all, so an email-only button would look like it worked
+   * and deliver nothing.
+   *
+   * Outstanding reset tokens are burned first. Two live links for one account
+   * means an earlier one — possibly the reason a reset was needed — still works.
+   */
+  async issuePasswordReset(
+    actorId: string,
+    id: string,
+    context: MutationContext,
+  ): Promise<AdminPasswordResetDto> {
+    const target = await this.requireUser(id);
+    if (target.deletedAt) {
+      throw new BadRequestException(
+        'That account is deleted. Restore it first, then issue a reset link.',
+      );
+    }
+
+    const token = generateToken(32);
+    const expiresAt = new Date(Date.now() + RESET_TTL_MS);
+
+    await this.prisma.$transaction([
+      this.prisma.verificationToken.updateMany({
+        where: { userId: id, purpose: 'PASSWORD_RESET', usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+      this.prisma.verificationToken.create({
+        data: {
+          userId: id,
+          tokenHash: hashToken(token),
+          purpose: 'PASSWORD_RESET',
+          expiresAt,
+        },
+      }),
+    ]);
+
+    const url = `${this.config.getOrThrow<string>('webOrigin')}/reset-password?token=${token}`;
+    const emailSent = await this.mail.sendPasswordResetEmail(target.email, target.name, url);
+
+    // The token itself is never audited — the log is readable by anyone who can
+    // read the log, and a reset link in it is a standing key to the account.
+    await this.afterMutation(actorId, id, 'PASSWORD_RESET', context, {
+      issuedByAdmin: true,
+      emailSent,
+      expiresAt: expiresAt.toISOString(),
+    });
+
+    return { url, expiresAt: expiresAt.toISOString(), emailSent };
+  }
+
   async restoreUser(actorId: string, id: string, context: MutationContext): Promise<AdminUserDetail> {
     const target = await this.requireUser(id);
     if (!target.deletedAt) throw new BadRequestException('That account is not deleted.');
@@ -328,7 +407,7 @@ export class AdminService {
   private async afterMutation(
     actorId: string,
     targetId: string,
-    action: 'UPDATE' | 'DELETE' | 'LOGOUT',
+    action: 'UPDATE' | 'DELETE' | 'LOGOUT' | 'PASSWORD_RESET',
     context: MutationContext,
     changes: Record<string, unknown>,
   ): Promise<void> {
