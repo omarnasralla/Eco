@@ -21,7 +21,7 @@ share verbatim.
 
 | | |
 |---|---|
-| **Domain tests** | 138 in `@eco/core`, 44 in the AI service — all passing |
+| **Domain tests** | 146 in `@eco/core`, 44 in the AI service — all passing |
 | **API** | 94 routes, tenant isolation enforced twice |
 | **Web** | 14 routes, mobile-first, light and dark |
 | **Database** | 28 tables, row-level security on every tenant table |

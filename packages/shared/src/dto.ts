@@ -241,6 +241,32 @@ export interface DailyAllowanceDto {
   lines: DailyAllowanceLineDto[];
 }
 
+export type TodayStatus = 'OK' | 'NEAR' | 'OVER';
+
+export interface TodayAllowanceLineDto {
+  categoryId: string;
+  categoryName: string;
+  categoryColor: string;
+  /** Today's budget, fixed at the start of the day so it can be reached. */
+  allowanceMinor: number;
+  spentTodayMinor: number;
+  remainingTodayMinor: number;
+  utilisationPct: number;
+  status: TodayStatus;
+}
+
+export interface TodayAllowanceDto {
+  currency: string;
+  daysRemainingInclusive: number;
+  totalAllowanceMinor: number;
+  totalSpentTodayMinor: number;
+  totalRemainingTodayMinor: number;
+  status: TodayStatus;
+  /** The share of today's budget at which a category is called close. */
+  warnAtPct: number;
+  lines: TodayAllowanceLineDto[];
+}
+
 export interface BudgetDto {
   id: string;
   month: string;
@@ -261,6 +287,11 @@ export interface BudgetDto {
    * amount was set aside to make it true.
    */
   excludedFromBudgetMinor: number;
+  /**
+   * Today's spending against a limit held fixed for the day. Null outside a
+   * month in progress.
+   */
+  todayAllowance: TodayAllowanceDto | null;
   /**
    * What is left, restated as a daily ceiling per category. Null for any month
    * that is not in progress — a finished month has no days left to pace.

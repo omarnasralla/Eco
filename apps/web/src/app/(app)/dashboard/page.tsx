@@ -18,6 +18,7 @@ import { useMoneyFormat } from '@/lib/auth-provider';
 import { formatDate, relativeDays } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/page-header';
 import { StatTile } from '@/components/dashboard/stat-tile';
+import { TodayAllowanceCard } from '@/components/dashboard/today-allowance-card';
 import { HealthScoreCard } from '@/components/dashboard/health-score-card';
 import { RecommendationsList } from '@/components/dashboard/recommendations-list';
 import { TrendChart } from '@/components/charts/trend-chart';
@@ -131,6 +132,11 @@ export default function DashboardPage() {
           hint="Cash plus savings, less debt"
         />
       </div>
+
+      {/* Above the month-level cards: on a dashboard opened mid-day, what is
+          still spendable today is more actionable than what the month has done
+          so far. */}
+      <TodayAllowanceCard />
 
       {data ? (
         <Card className="mt-3">

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { dailyAllowance, evaluateBudget, median, rolloverAmountMinor, suggestBudget } from './budget';
+import {
+  dailyAllowance,
+  evaluateBudget,
+  median,
+  rolloverAmountMinor,
+  suggestBudget,
+  todayAllowance,
+} from './budget';
 
 const lines = [
   { categoryId: 'food', limitMinor: 60_000 },
@@ -311,5 +318,113 @@ describe('dailyAllowance', () => {
 
     expect(dailyAllowance({ evaluation, today: '2026-10-01' })).toBeNull();
     expect(dailyAllowance({ evaluation, today: '2026-08-31' })).toBeNull();
+  });
+});
+
+describe('todayAllowance', () => {
+  // 60,000 food over a 30-day September: 2,000 a day if spent evenly.
+  const foodOnly = [{ categoryId: 'food', limitMinor: 60_000 }];
+  const evaluate = (spent: number, asOf: string) =>
+    evaluateBudget({ month: '2026-09', lines: foodOnly, spendByCategory: { food: spent }, asOf });
+
+  it('holds today’s budget still while the day is spent', () => {
+    // Same day, same history — only today's spending differs. The limit must
+    // not move, or it could never be reached.
+    const before = todayAllowance({
+      evaluation: evaluate(20_000, '2026-09-11'),
+      spentTodayByCategory: {},
+      today: '2026-09-11',
+    })!;
+    const after = todayAllowance({
+      evaluation: evaluate(21_500, '2026-09-11'),
+      spentTodayByCategory: { food: 1_500 },
+      today: '2026-09-11',
+    })!;
+
+    expect(before.lines[0]!.allowanceMinor).toBe(2_000); // 40,000 over 20 days
+    expect(after.lines[0]!.allowanceMinor).toBe(2_000);
+    expect(after.lines[0]!.spentTodayMinor).toBe(1_500);
+    expect(after.lines[0]!.remainingTodayMinor).toBe(500);
+  });
+
+  it('agrees with dailyAllowance until the day’s first purchase', () => {
+    const evaluation = evaluate(20_000, '2026-09-11');
+    const today = todayAllowance({ evaluation, spentTodayByCategory: {}, today: '2026-09-11' })!;
+    const rate = dailyAllowance({ evaluation, today: '2026-09-11' })!;
+
+    expect(today.lines[0]!.allowanceMinor).toBe(rate.lines[0]!.allowanceMinor);
+  });
+
+  it('warns before the limit is reached, not after', () => {
+    const at79 = todayAllowance({
+      evaluation: evaluate(21_580, '2026-09-11'),
+      spentTodayByCategory: { food: 1_580 },
+      today: '2026-09-11',
+    })!;
+    const at80 = todayAllowance({
+      evaluation: evaluate(21_600, '2026-09-11'),
+      spentTodayByCategory: { food: 1_600 },
+      today: '2026-09-11',
+    })!;
+
+    expect(at79.lines[0]!.status).toBe('OK');
+    expect(at80.lines[0]!.status).toBe('NEAR'); // exactly 80% of 2,000
+  });
+
+  it('reports going past today’s budget as over, with a negative remainder', () => {
+    const result = todayAllowance({
+      evaluation: evaluate(23_000, '2026-09-11'),
+      spentTodayByCategory: { food: 3_000 },
+      today: '2026-09-11',
+    })!;
+
+    expect(result.lines[0]!.status).toBe('OVER');
+    expect(result.lines[0]!.remainingTodayMinor).toBe(-1_000);
+    expect(result.lines[0]!.utilisationPct).toBe(150);
+  });
+
+  it('honours a custom warning threshold', () => {
+    const result = todayAllowance({
+      evaluation: evaluate(21_000, '2026-09-11'),
+      spentTodayByCategory: { food: 1_000 },
+      today: '2026-09-11',
+      warnAtPct: 50,
+    })!;
+    expect(result.lines[0]!.status).toBe('NEAR'); // 1,000 is 50% of 2,000
+  });
+
+  it('converts before dividing, as the monthly figure does', () => {
+    const result = todayAllowance({
+      evaluation: evaluate(20_000, '2026-09-11'),
+      spentTodayByCategory: {},
+      today: '2026-09-11',
+      convertMinor: (minor) => Math.round(minor * 3.75),
+    })!;
+    expect(result.lines[0]!.allowanceMinor).toBe(7_500); // 150,000 SAR / 20 days
+  });
+
+  it('totals against the whole budget, including unbudgeted spend', () => {
+    const evaluation = evaluateBudget({
+      month: '2026-09',
+      lines: foodOnly,
+      spendByCategory: { food: 20_000, other: 5_000 },
+      totalLimitMinor: 100_000,
+      asOf: '2026-09-11',
+    });
+    const result = todayAllowance({
+      evaluation,
+      spentTodayByCategory: { other: 5_000 },
+      today: '2026-09-11',
+    })!;
+
+    // 100,000 less 20,000 of earlier food = 80,000 at the start of today.
+    expect(result.totalAllowanceMinor).toBe(4_000); // over 20 days
+    expect(result.totalSpentTodayMinor).toBe(5_000);
+    expect(result.status).toBe('OVER');
+  });
+
+  it('returns null outside a month in progress', () => {
+    const evaluation = evaluate(20_000, '2026-09-11');
+    expect(todayAllowance({ evaluation, spentTodayByCategory: {}, today: '2026-10-02' })).toBeNull();
   });
 });

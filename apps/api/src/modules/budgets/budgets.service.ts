@@ -1,7 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Logger } from '@nestjs/common';
-import { addMonths, dailyAllowance, evaluateBudget, rolloverAmountMinor, suggestBudget } from '@eco/core';
+import {
+  addMonths,
+  dailyAllowance,
+  evaluateBudget,
+  rolloverAmountMinor,
+  suggestBudget,
+  todayAllowance,
+} from '@eco/core';
 import {
   CACHE_TTL_SECONDS,
   convertMinor,
@@ -14,7 +21,7 @@ import { RedisService } from '../../redis/redis.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { toNumber } from '../../common/utils/money';
 import { CurrencyService } from '../currency/currency.service';
-import { dateToMonth, monthToDate, todayIso } from '../../common/utils/dates';
+import { dateToMonth, fromIsoDate, monthToDate, todayIso } from '../../common/utils/dates';
 
 @Injectable()
 export class BudgetsService {
@@ -60,11 +67,12 @@ export class BudgetsService {
       });
       if (!budget) return null;
 
-      const [spendByCategory, committedSpendByCategory, excludedFromBudgetMinor] =
+      const [spendByCategory, committedSpendByCategory, excludedFromBudgetMinor, spentTodayByCategory] =
         await Promise.all([
           this.spendByCategory(userId, month),
           this.committedSpendByCategory(userId, month),
           this.excludedTotal(userId, month),
+          this.spentToday(userId, month),
         ]);
 
       const evaluation = evaluateBudget({
@@ -111,6 +119,17 @@ export class BudgetsService {
         ...(convertMinor ? { convertMinor } : {}),
       });
 
+      // The same budget asked about today rather than the rest of the month.
+      // Shares the evaluation and the converter so the two figures cannot
+      // disagree about what is left or what currency it is in.
+      const today = todayAllowance({
+        evaluation,
+        spentTodayByCategory,
+        today: todayIso(),
+        warnAtPct: budget.alertThresholdPct,
+        ...(convertMinor ? { convertMinor } : {}),
+      });
+
       return {
         id: budget.id,
         month,
@@ -125,6 +144,25 @@ export class BudgetsService {
         projectedSpendMinor: evaluation.projectedSpendMinor,
         daysRemaining: evaluation.daysRemaining,
         excludedFromBudgetMinor,
+        todayAllowance: today && {
+          currency: convertMinor ? allowanceCurrency : budget.currency,
+          daysRemainingInclusive: today.daysRemainingInclusive,
+          totalAllowanceMinor: today.totalAllowanceMinor,
+          totalSpentTodayMinor: today.totalSpentTodayMinor,
+          totalRemainingTodayMinor: today.totalRemainingTodayMinor,
+          status: today.status,
+          warnAtPct: budget.alertThresholdPct,
+          lines: today.lines.map((line) => ({
+            categoryId: line.categoryId,
+            categoryName: categoryById.get(line.categoryId)?.name ?? 'Unknown',
+            categoryColor: categoryById.get(line.categoryId)?.color ?? '#64748b',
+            allowanceMinor: line.allowanceMinor,
+            spentTodayMinor: line.spentTodayMinor,
+            remainingTodayMinor: line.remainingTodayMinor,
+            utilisationPct: line.utilisationPct,
+            status: line.status,
+          })),
+        },
         dailyAllowance: allowance && {
           currency: convertMinor ? allowanceCurrency : budget.currency,
           daysRemainingInclusive: allowance.daysRemainingInclusive,
@@ -311,6 +349,35 @@ export class BudgetsService {
         // still gone from the account; it just is not evidence about pacing.
         excludedFromBudget: false,
         ...(recurringOnly ? { isRecurring: true } : {}),
+      },
+      _sum: { baseAmountMinor: true },
+    });
+
+    return Object.fromEntries(
+      rows.map((row) => [row.categoryId, toNumber(row._sum.baseAmountMinor ?? BigInt(0))]),
+    );
+  }
+
+  /**
+   * Today's spend by category, in the budget's currency.
+   *
+   * Excluded expenses are left out for the same reason they are left out of
+   * the month: they are real spending, but not spending any budget was meant
+   * to cover, and counting them would fire a daily warning about money the
+   * limit never claimed to govern.
+   */
+  private async spentToday(userId: string, month: string): Promise<Record<string, number>> {
+    const today = todayIso();
+    // A day outside the month being viewed has no "today" to report.
+    if (today.slice(0, 7) !== month) return {};
+
+    const rows = await this.prisma.expense.groupBy({
+      by: ['categoryId'],
+      where: {
+        userId,
+        deletedAt: null,
+        date: fromIsoDate(today),
+        excludedFromBudget: false,
       },
       _sum: { baseAmountMinor: true },
     });

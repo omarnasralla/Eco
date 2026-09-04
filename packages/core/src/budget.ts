@@ -310,3 +310,108 @@ export function dailyAllowance(params: {
     lines,
   };
 }
+
+// ─── Today's limit ────────────────────────────────────────────────────────
+
+export type TodayStatus = 'OK' | 'NEAR' | 'OVER';
+
+export interface TodayAllowanceLine {
+  categoryId: string;
+  /** Today's budget, fixed at the start of the day. */
+  allowanceMinor: number;
+  spentTodayMinor: number;
+  /** Negative once today's budget is exceeded. */
+  remainingTodayMinor: number;
+  utilisationPct: number;
+  status: TodayStatus;
+}
+
+export interface TodayAllowanceResult {
+  daysRemainingInclusive: number;
+  totalAllowanceMinor: number;
+  totalSpentTodayMinor: number;
+  totalRemainingTodayMinor: number;
+  status: TodayStatus;
+  lines: TodayAllowanceLine[];
+}
+
+/**
+ * Today's spending against a limit that holds still for the day.
+ *
+ * `dailyAllowance` answers a different question — the rate that is sustainable
+ * from here — and it necessarily moves whenever money is spent, because what
+ * is left has changed. That makes it useless as something to *reach*: spend
+ * half of it and it simply falls, so it can be approached forever and never
+ * arrived at, and a warning built on it would never fire.
+ *
+ * So today's budget is derived from what was left at the *start* of today —
+ * the month-to-date remainder with today's own spending added back — and then
+ * held fixed while the day runs. Only the spent side moves. A warning can then
+ * mean what it says.
+ *
+ * The two agree exactly until the first purchase of the day, which is the
+ * point: they are the same number asked at different moments.
+ */
+export function todayAllowance(params: {
+  evaluation: BudgetEvaluation;
+  /** Today's spend so far, by category, in the budget's currency. */
+  spentTodayByCategory: Record<string, number>;
+  today: IsoDate;
+  /** Share of today's budget that counts as "close". Defaults to 80%. */
+  warnAtPct?: number;
+  /** Applied before dividing, exactly as in `dailyAllowance`. */
+  convertMinor?: (minor: number) => number;
+}): TodayAllowanceResult | null {
+  const { evaluation, spentTodayByCategory, today, warnAtPct = 80 } = params;
+  const convert = params.convertMinor ?? ((minor: number) => minor);
+
+  const { y, m } = parseIsoMonth(evaluation.month);
+  const totalDays = daysInMonth(y, m);
+  if (today < startOfMonth(evaluation.month) || today > endOfMonth(evaluation.month)) return null;
+
+  const daysElapsed = diffDays(startOfMonth(evaluation.month), today) + 1;
+  const daysRemainingInclusive = totalDays - daysElapsed + 1;
+
+  const statusFor = (spent: number, allowance: number): TodayStatus => {
+    if (spent > allowance) return 'OVER';
+    if (allowance > 0 && spent * 100 >= warnAtPct * allowance) return 'NEAR';
+    return 'OK';
+  };
+
+  const lines = evaluation.lines.map((line): TodayAllowanceLine => {
+    const spentToday = spentTodayByCategory[line.categoryId] ?? 0;
+    // `remainingMinor` has already had today's spending taken off it, so adding
+    // it back is what recovers the position this day actually started from.
+    const startOfDayRemaining = line.remainingMinor + spentToday;
+    const allowanceMinor = Math.max(
+      Math.floor(convert(startOfDayRemaining) / daysRemainingInclusive),
+      0,
+    );
+    const spentTodayMinor = convert(spentToday);
+
+    return {
+      categoryId: line.categoryId,
+      allowanceMinor,
+      spentTodayMinor,
+      remainingTodayMinor: allowanceMinor - spentTodayMinor,
+      utilisationPct: allowanceMinor > 0 ? pct(spentTodayMinor, allowanceMinor) : 0,
+      status: statusFor(spentTodayMinor, allowanceMinor),
+    };
+  });
+
+  const spentTodayTotal = Object.values(spentTodayByCategory).reduce((s, v) => s + v, 0);
+  const totalSpentTodayMinor = convert(spentTodayTotal);
+  const totalAllowanceMinor = Math.max(
+    Math.floor(convert(evaluation.totalRemainingMinor + spentTodayTotal) / daysRemainingInclusive),
+    0,
+  );
+
+  return {
+    daysRemainingInclusive,
+    totalAllowanceMinor,
+    totalSpentTodayMinor,
+    totalRemainingTodayMinor: totalAllowanceMinor - totalSpentTodayMinor,
+    status: statusFor(totalSpentTodayMinor, totalAllowanceMinor),
+    lines,
+  };
+}
