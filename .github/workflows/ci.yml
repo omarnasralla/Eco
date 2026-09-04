@@ -34,7 +34,7 @@ jobs:
       - name: Typecheck every workspace
         run: npm run typecheck --workspaces --if-present
 
-      # 136 tests over the financial engine. No database, no mocks, ~1 second.
+      # 138 tests over the financial engine. No database, no mocks, ~1 second.
       - name: Domain unit tests
         run: npm run test --workspace @eco/core
 

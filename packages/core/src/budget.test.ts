@@ -267,6 +267,45 @@ describe('dailyAllowance', () => {
     expect(result.totalAllowanceMinor).toBe(2_800); // over 25 days
   });
 
+  it('converts before dividing, so the figure is not rounded twice', () => {
+    // 40,000 limit less 29,282 spent leaves 107.18 USD; at 3.75 SAR that is
+    // 401.92 SAR over 27 days = 14.88, not the 14.85 you get by flooring the
+    // dollar figure to 3.96 first and converting that.
+    const evaluation = evaluateBudget({
+      month: '2026-09',
+      lines: [{ categoryId: 'food', limitMinor: 40_000 }],
+      spendByCategory: { food: 29_282 },
+      asOf: '2026-09-04',
+    });
+
+    const inRiyals = dailyAllowance({
+      evaluation,
+      today: '2026-09-04',
+      convertMinor: (minor) => Math.round(minor * 3.75),
+    })!;
+
+    expect(inRiyals.lines[0]!.allowanceMinor).toBe(1_488);
+    expect(inRiyals.lines[0]!.remainingMinor).toBe(40_193);
+    expect(inRiyals.lines[0]!.evenPaceMinor).toBe(5_000); // 150,000 SAR / 30
+  });
+
+  it('leaves the status alone when only the currency changes', () => {
+    const evaluation = evaluateBudget({
+      month: '2026-09',
+      lines,
+      spendByCategory: { food: 55_000 },
+      asOf: '2026-09-10',
+    });
+    const base = dailyAllowance({ evaluation, today: '2026-09-10' })!;
+    const converted = dailyAllowance({
+      evaluation,
+      today: '2026-09-10',
+      convertMinor: (minor) => Math.round(minor * 3.75),
+    })!;
+
+    expect(converted.lines.map((l) => l.status)).toEqual(base.lines.map((l) => l.status));
+  });
+
   it('returns null for a month that is finished or has not started', () => {
     const evaluation = evaluate({ food: 10_000 }, '2026-09-30');
 

@@ -36,8 +36,11 @@ export class BudgetsController {
   async findByMonth(
     @CurrentUser() user: { id: string; currency: string },
     @Param('month') month: string,
+    // Affects the daily-allowance figures only; the budget itself is always
+    // reported in its own currency.
+    @Query('display') display?: string,
   ) {
-    return this.budgets.findByMonth(user.id, month, user.currency);
+    return this.budgets.findByMonth(user.id, month, user.currency, display);
   }
 
   @Put()

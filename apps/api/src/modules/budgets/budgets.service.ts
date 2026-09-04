@@ -2,11 +2,18 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Logger } from '@nestjs/common';
 import { addMonths, dailyAllowance, evaluateBudget, rolloverAmountMinor, suggestBudget } from '@eco/core';
-import { CACHE_TTL_SECONDS, type BudgetDto, type BudgetInput, type BudgetLineDto } from '@eco/shared';
+import {
+  CACHE_TTL_SECONDS,
+  convertMinor,
+  type BudgetDto,
+  type BudgetInput,
+  type BudgetLineDto,
+} from '@eco/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { toNumber } from '../../common/utils/money';
+import { CurrencyService } from '../currency/currency.service';
 import { dateToMonth, monthToDate, todayIso } from '../../common/utils/dates';
 
 @Injectable()
@@ -17,6 +24,7 @@ export class BudgetsService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly notifications: NotificationsService,
+    private readonly currency: CurrencyService,
   ) {}
 
   /**
@@ -25,8 +33,21 @@ export class BudgetsService {
    * keeps the numbers correct after a back-dated expense edit, which a stored
    * running total would silently get wrong.
    */
-  async findByMonth(userId: string, month: string, userCurrency: string): Promise<BudgetDto | null> {
-    const cacheKey = this.redis.key(userId, 'budget', month);
+  async findByMonth(
+    userId: string,
+    month: string,
+    userCurrency: string,
+    /**
+     * Currency for the daily-allowance figures only. Everything else stays in
+     * the budget's own currency — this exists so the pacing can be quoted in
+     * the money the user actually spends, not so a budget can change shape.
+     */
+    displayCurrency?: string,
+  ): Promise<BudgetDto | null> {
+    // The display currency changes the response, so it has to change the key.
+    // Sharing one entry across currencies would serve riyals to the next
+    // caller asking for dollars.
+    const cacheKey = this.redis.key(userId, 'budget', month, displayCurrency ?? '-');
 
     return this.redis.remember(cacheKey, CACHE_TTL_SECONDS.dashboard, async () => {
       const budget = await this.prisma.budget.findFirst({
@@ -79,7 +100,13 @@ export class BudgetsService {
       // Restate the same evaluation as a per-day ceiling. Derived from the
       // evaluation rather than recomputed, so the pacing can never disagree
       // with the remaining figures shown beside it.
-      const allowance = dailyAllowance({ evaluation, today: todayIso() });
+      const allowanceCurrency = displayCurrency ?? budget.currency;
+      const convertMinor = await this.displayConverter(budget.currency, allowanceCurrency);
+      const allowance = dailyAllowance({
+        evaluation,
+        today: todayIso(),
+        ...(convertMinor ? { convertMinor } : {}),
+      });
 
       return {
         id: budget.id,
@@ -95,6 +122,7 @@ export class BudgetsService {
         projectedSpendMinor: evaluation.projectedSpendMinor,
         daysRemaining: evaluation.daysRemaining,
         dailyAllowance: allowance && {
+          currency: convertMinor ? allowanceCurrency : budget.currency,
           daysRemainingInclusive: allowance.daysRemainingInclusive,
           totalRemainingMinor: allowance.totalRemainingMinor,
           totalAllowanceMinor: allowance.totalAllowanceMinor,
@@ -283,6 +311,39 @@ export class BudgetsService {
     return Object.fromEntries(
       rows.map((row) => [row.categoryId, toNumber(row._sum.baseAmountMinor ?? BigInt(0))]),
     );
+  }
+
+  /**
+   * A synchronous minor-unit converter, or null when no conversion is wanted
+   * or possible.
+   *
+   * The rates are fetched once and closed over rather than awaited per line:
+   * a budget with twelve categories would otherwise make twelve round trips to
+   * produce twelve figures from a single day's rate table.
+   *
+   * Returning null on failure rather than throwing is deliberate. This is a
+   * read-only aggregate, and a missing rate should cost the user the currency
+   * they preferred, not the whole budget screen — the caller falls back to the
+   * budget's own currency and labels it honestly.
+   */
+  private async displayConverter(
+    from: string,
+    to: string,
+  ): Promise<((minor: number) => number) | null> {
+    if (from === to) return null;
+    try {
+      const { rates } = await this.currency.getRates();
+      // Convert one unit up front: a missing rate throws here, before any
+      // figure has been built from it, rather than part-way down the list.
+      convertMinor(100, from, to, rates);
+      return (minor: number) => convertMinor(minor, from, to, rates);
+    } catch (error) {
+      this.logger.warn(
+        `Allowance display conversion ${from}→${to} failed (${(error as Error).message}); ` +
+          `reporting in ${from}`,
+      );
+      return null;
+    }
   }
 
   private asOfFor(month: string): string {

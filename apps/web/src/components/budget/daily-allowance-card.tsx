@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { CalendarClock } from 'lucide-react';
 import { formatMoney, type DailyAllowanceLineDto } from '@eco/shared';
 import { fetchers, queryKeys } from '@/lib/queries';
+import { useEntryCurrency } from '@/lib/entry-currency';
 import { useMoneyFormat } from '@/lib/auth-provider';
 import { useChartTheme } from '@/components/charts/chart-theme';
 import { Badge } from '@/components/ui/badge';
@@ -37,9 +38,16 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
   const theme = useChartTheme();
   const month = new Date().toISOString().slice(0, 7);
 
+  // Quote the ceiling in the money the user actually hands over. Someone who
+  // reports in dollars but pays in riyals cannot act on "$3.96 a day" without
+  // doing the arithmetic themselves at the till, which is the one place they
+  // will not do it. The entry currency is the honest signal for this: it is
+  // whatever they last typed an amount in.
+  const [entryCurrency] = useEntryCurrency(currency);
+
   const budget = useQuery({
-    queryKey: queryKeys.budget(month),
-    queryFn: () => fetchers.budget(month),
+    queryKey: queryKeys.budget(month, entryCurrency),
+    queryFn: () => fetchers.budget(month, entryCurrency),
   });
 
   if (budget.isLoading) return <Skeleton className="mb-4 h-28 w-full" />;
@@ -47,7 +55,9 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
   const allowance = budget.data?.dailyAllowance;
   if (!allowance || allowance.lines.length === 0) return null;
 
-  const money = (minor: number) => formatMoney(minor, currency, { locale });
+  // The server decides what it could actually convert; trusting the requested
+  // code here would label riyals as dollars whenever a rate was unavailable.
+  const money = (minor: number) => formatMoney(minor, allowance.currency, { locale });
 
   // Follow the list's own filter: when the user has narrowed to one category,
   // the pacing they are being shown should be the pacing for what they are
@@ -112,6 +122,15 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
             </li>
           ))}
         </ul>
+
+        {/* The budget itself is still kept in the base currency, and the
+            Budgets tab still reports it there. Saying so is the difference
+            between a helpful conversion and two screens that disagree. */}
+        {allowance.currency === currency ? null : (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Converted from your {currency} budget at today&rsquo;s rate.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

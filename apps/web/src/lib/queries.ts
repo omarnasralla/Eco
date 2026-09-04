@@ -47,7 +47,7 @@ export const queryKeys = {
   debtComparison: (budget: number) => ['debts', 'compare', budget] as const,
   goals: ['goals'] as const,
   goalContributions: (id: string) => ['goals', id, 'contributions'] as const,
-  budget: (month: string) => ['budgets', month] as const,
+  budget: (month: string, display?: string) => ['budgets', month, display ?? '-'] as const,
   accounts: ['accounts'] as const,
   merchantSuggestions: (categoryId: string, search: string) =>
     ['expenses', 'merchants', categoryId, search] as const,
@@ -140,8 +140,14 @@ export const fetchers = {
 
   // React Query rejects `undefined` as query data, so an absent budget is
   // normalised to an explicit null the UI can render an empty state from.
-  budget: (month: string) =>
-    api.get<BudgetDto | null>(`/budgets/${month}`).then((b) => b ?? null),
+  budget: (month: string, display?: string) =>
+    api
+      .get<BudgetDto | null>(`/budgets/${month}`, {
+        // Only the daily-allowance figures follow this; the budget itself is
+        // always reported in its own currency.
+        ...(display ? { query: { display } } : {}),
+      })
+      .then((b) => b ?? null),
 
   forecast: (horizonMonths = 6) =>
     api.get<ForecastDto>('/ai/forecast', { query: { horizonMonths } }),

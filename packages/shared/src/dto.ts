@@ -226,6 +226,12 @@ export interface DailyAllowanceLineDto {
  * budget's lines to look them up.
  */
 export interface DailyAllowanceDto {
+  /**
+   * What these figures are denominated in. Not always the budget's currency:
+   * someone who reports in USD but pays in SAR is given a daily ceiling in the
+   * money they actually hand over.
+   */
+  currency: string;
   /** Days left to spend in, today included. Always >= 1. */
   daysRemainingInclusive: number;
   totalRemainingMinor: number;

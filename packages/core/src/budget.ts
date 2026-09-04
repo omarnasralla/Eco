@@ -254,8 +254,20 @@ export function dailyAllowance(params: {
   evaluation: BudgetEvaluation;
   /** Today, in the user's own timezone — not the server's. */
   today: IsoDate;
+  /**
+   * Restates every figure in a second currency, applied *before* the division.
+   *
+   * Order matters. Converting the already-floored daily figure instead would
+   * round twice — once into the budget's currency, once out of it — and the
+   * second rounding is pure loss: 107.18 USD over 27 days floors to 3.96, and
+   * 3.96 x 3.75 is 14.85 SAR, where converting first gives 14.88. The user is
+   * told to spend three halalas a day less than they have, every day, for no
+   * reason other than the order of two operations.
+   */
+  convertMinor?: (minor: number) => number;
 }): DailyAllowanceResult | null {
   const { evaluation, today } = params;
+  const convert = params.convertMinor ?? ((minor: number) => minor);
   const { y, m } = parseIsoMonth(evaluation.month);
   const totalDays = daysInMonth(y, m);
 
@@ -268,9 +280,9 @@ export function dailyAllowance(params: {
     // An overspent line has no allowance to give. Reporting a negative daily
     // figure, or quietly showing zero as though it were a budget, both read as
     // "spend nothing" — only one of them is honest about why.
-    const remainingMinor = line.remainingMinor;
+    const remainingMinor = convert(line.remainingMinor);
     const allowanceMinor = Math.max(Math.floor(remainingMinor / daysRemainingInclusive), 0);
-    const evenPaceMinor = Math.floor(line.effectiveLimitMinor / totalDays);
+    const evenPaceMinor = Math.floor(convert(line.effectiveLimitMinor) / totalDays);
 
     return {
       categoryId: line.categoryId,
@@ -289,7 +301,7 @@ export function dailyAllowance(params: {
     };
   });
 
-  const totalRemainingMinor = evaluation.totalRemainingMinor;
+  const totalRemainingMinor = convert(evaluation.totalRemainingMinor);
 
   return {
     daysRemainingInclusive,
