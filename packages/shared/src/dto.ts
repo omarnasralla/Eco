@@ -249,7 +249,10 @@ export interface TodayAllowanceLineDto {
   categoryColor: string;
   /** Today's budget, fixed at the start of the day so it can be reached. */
   allowanceMinor: number;
+  /** Today's discretionary spend; committed charges are held out of it. */
   spentTodayMinor: number;
+  /** Standing charges that landed today, excluded from the comparison. */
+  committedTodayMinor: number;
   remainingTodayMinor: number;
   utilisationPct: number;
   status: TodayStatus;
@@ -260,6 +263,7 @@ export interface TodayAllowanceDto {
   daysRemainingInclusive: number;
   totalAllowanceMinor: number;
   totalSpentTodayMinor: number;
+  totalCommittedTodayMinor: number;
   totalRemainingTodayMinor: number;
   status: TodayStatus;
   /** The share of today's budget at which a category is called close. */

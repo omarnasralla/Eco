@@ -67,13 +67,19 @@ export class BudgetsService {
       });
       if (!budget) return null;
 
-      const [spendByCategory, committedSpendByCategory, excludedFromBudgetMinor, spentTodayByCategory] =
-        await Promise.all([
-          this.spendByCategory(userId, month),
-          this.committedSpendByCategory(userId, month),
-          this.excludedTotal(userId, month),
-          this.spentToday(userId, month),
-        ]);
+      const [
+        spendByCategory,
+        committedSpendByCategory,
+        excludedFromBudgetMinor,
+        spentTodayByCategory,
+        committedTodayByCategory,
+      ] = await Promise.all([
+        this.spendByCategory(userId, month),
+        this.committedSpendByCategory(userId, month),
+        this.excludedTotal(userId, month),
+        this.spentToday(userId, month, false),
+        this.spentToday(userId, month, true),
+      ]);
 
       const evaluation = evaluateBudget({
         month,
@@ -125,6 +131,7 @@ export class BudgetsService {
       const today = todayAllowance({
         evaluation,
         spentTodayByCategory,
+        committedTodayByCategory,
         today: todayIso(),
         warnAtPct: budget.alertThresholdPct,
         ...(convertMinor ? { convertMinor } : {}),
@@ -149,6 +156,7 @@ export class BudgetsService {
           daysRemainingInclusive: today.daysRemainingInclusive,
           totalAllowanceMinor: today.totalAllowanceMinor,
           totalSpentTodayMinor: today.totalSpentTodayMinor,
+          totalCommittedTodayMinor: today.totalCommittedTodayMinor,
           totalRemainingTodayMinor: today.totalRemainingTodayMinor,
           status: today.status,
           warnAtPct: budget.alertThresholdPct,
@@ -158,6 +166,7 @@ export class BudgetsService {
             categoryColor: categoryById.get(line.categoryId)?.color ?? '#64748b',
             allowanceMinor: line.allowanceMinor,
             spentTodayMinor: line.spentTodayMinor,
+            committedTodayMinor: line.committedTodayMinor,
             remainingTodayMinor: line.remainingTodayMinor,
             utilisationPct: line.utilisationPct,
             status: line.status,
@@ -366,7 +375,11 @@ export class BudgetsService {
    * to cover, and counting them would fire a daily warning about money the
    * limit never claimed to govern.
    */
-  private async spentToday(userId: string, month: string): Promise<Record<string, number>> {
+  private async spentToday(
+    userId: string,
+    month: string,
+    recurringOnly: boolean,
+  ): Promise<Record<string, number>> {
     const today = todayIso();
     // A day outside the month being viewed has no "today" to report.
     if (today.slice(0, 7) !== month) return {};
@@ -378,6 +391,7 @@ export class BudgetsService {
         deletedAt: null,
         date: fromIsoDate(today),
         excludedFromBudget: false,
+        ...(recurringOnly ? { isRecurring: true } : {}),
       },
       _sum: { baseAmountMinor: true },
     });

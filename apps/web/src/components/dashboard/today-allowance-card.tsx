@@ -46,7 +46,10 @@ export function TodayAllowanceCard() {
   // Only categories with something to say today. A list of untouched limits is
   // noise on a dashboard; the ones being spent are the ones worth watching.
   const notable = today.lines
-    .filter((line) => line.spentTodayMinor > 0 || line.status !== 'OK')
+    .filter(
+      (line) =>
+        line.spentTodayMinor > 0 || line.committedTodayMinor > 0 || line.status !== 'OK',
+    )
     .sort((a, b) => b.utilisationPct - a.utilisationPct);
 
   return (
@@ -117,6 +120,13 @@ export function TodayAllowanceCard() {
           <p className="mt-3 text-xs text-muted-foreground">Nothing spent yet today.</p>
         )}
 
+        {today.totalCommittedTodayMinor > 0 ? (
+          <p className="mt-3 text-xs text-muted-foreground">
+            Excludes {money(today.totalCommittedTodayMinor)} of subscriptions and
+            standing charges billed today — already taken off the month.
+          </p>
+        ) : null}
+
         {today.currency === currency ? null : (
           <p className="mt-3 text-xs text-muted-foreground">
             Converted from your {currency} budget at today&rsquo;s rate.
@@ -149,6 +159,9 @@ function TodayRow({
         <span className="block truncate text-sm">{line.categoryName}</span>
         <span className="block text-xs text-muted-foreground">
           {money(line.spentTodayMinor)} of {money(line.allowanceMinor)}
+          {line.committedTodayMinor > 0
+            ? ` · ${money(line.committedTodayMinor)} standing`
+            : ''}
         </span>
       </span>
       <Badge

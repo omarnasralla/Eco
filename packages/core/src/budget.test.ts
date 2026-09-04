@@ -428,3 +428,76 @@ describe('todayAllowance', () => {
     expect(todayAllowance({ evaluation, spentTodayByCategory: {}, today: '2026-10-02' })).toBeNull();
   });
 });
+
+describe('todayAllowance with committed charges', () => {
+  const foodOnly = [{ categoryId: 'food', limitMinor: 60_000 }];
+
+  it('does not bill a standing charge to the day it lands on', () => {
+    // 20,000 spent earlier in the month, then a 30,000 subscription and 200 of
+    // ordinary spending today, on day 11 of 30.
+    const evaluation = evaluateBudget({
+      month: '2026-09',
+      lines: foodOnly,
+      spendByCategory: { food: 50_200 },
+      asOf: '2026-09-11',
+    });
+
+    const counted = todayAllowance({
+      evaluation,
+      spentTodayByCategory: { food: 30_200 },
+      today: '2026-09-11',
+    })!;
+    const held = todayAllowance({
+      evaluation,
+      spentTodayByCategory: { food: 30_200 },
+      committedTodayByCategory: { food: 30_000 },
+      today: '2026-09-11',
+    })!;
+
+    // Counted, the day is a catastrophe on a charge nobody chose today.
+    expect(counted.lines[0]!.status).toBe('OVER');
+
+    // Held apart, the day is judged on its 200 of actual discretion.
+    expect(held.lines[0]!.spentTodayMinor).toBe(200);
+    expect(held.lines[0]!.committedTodayMinor).toBe(30_000);
+    expect(held.lines[0]!.status).toBe('OK');
+  });
+
+  it('still lets the subscription shrink the rest of the month', () => {
+    const evaluation = evaluateBudget({
+      month: '2026-09',
+      lines: foodOnly,
+      spendByCategory: { food: 50_200 },
+      asOf: '2026-09-11',
+    });
+    const held = todayAllowance({
+      evaluation,
+      spentTodayByCategory: { food: 30_200 },
+      committedTodayByCategory: { food: 30_000 },
+      today: '2026-09-11',
+    })!;
+
+    // 60,000 limit less 20,000 earlier and the 30,000 subscription leaves
+    // 10,000 for the remaining 20 days — the charge is not waved away.
+    expect(held.lines[0]!.allowanceMinor).toBe(500);
+  });
+
+  it('never treats more as committed than was actually spent', () => {
+    const evaluation = evaluateBudget({
+      month: '2026-09',
+      lines: foodOnly,
+      spendByCategory: { food: 20_500 },
+      asOf: '2026-09-11',
+    });
+    const result = todayAllowance({
+      evaluation,
+      spentTodayByCategory: { food: 500 },
+      committedTodayByCategory: { food: 99_000 },
+      today: '2026-09-11',
+    })!;
+
+    expect(result.lines[0]!.committedTodayMinor).toBe(500);
+    expect(result.lines[0]!.spentTodayMinor).toBe(0);
+    expect(result.totalCommittedTodayMinor).toBe(500);
+  });
+});

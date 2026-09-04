@@ -319,7 +319,10 @@ export interface TodayAllowanceLine {
   categoryId: string;
   /** Today's budget, fixed at the start of the day. */
   allowanceMinor: number;
+  /** Today's *discretionary* spend — committed charges are not counted. */
   spentTodayMinor: number;
+  /** Standing charges that landed today. Excluded from the comparison above. */
+  committedTodayMinor: number;
   /** Negative once today's budget is exceeded. */
   remainingTodayMinor: number;
   utilisationPct: number;
@@ -330,6 +333,7 @@ export interface TodayAllowanceResult {
   daysRemainingInclusive: number;
   totalAllowanceMinor: number;
   totalSpentTodayMinor: number;
+  totalCommittedTodayMinor: number;
   totalRemainingTodayMinor: number;
   status: TodayStatus;
   lines: TodayAllowanceLine[];
@@ -351,18 +355,38 @@ export interface TodayAllowanceResult {
  *
  * The two agree exactly until the first purchase of the day, which is the
  * point: they are the same number asked at different moments.
+ *
+ * Committed charges are held apart. A monthly subscription or a standing bill
+ * is real spending that reduces the month, but it is not a day's discretion,
+ * and billing it to the day it happens to land makes that day look like a
+ * catastrophe — a rent-sized charge is thirty times any daily limit, so the
+ * warning fires every month on a date the user cannot do anything about. This
+ * is the same distinction `evaluateBudget` already draws for the month-end
+ * projection, applied to the day.
  */
 export function todayAllowance(params: {
   evaluation: BudgetEvaluation;
   /** Today's spend so far, by category, in the budget's currency. */
   spentTodayByCategory: Record<string, number>;
+  /**
+   * The committed slice of `spentTodayByCategory` — subscriptions, standing
+   * bills. Still deducted from what the month has left; never counted against
+   * today's limit.
+   */
+  committedTodayByCategory?: Record<string, number>;
   today: IsoDate;
   /** Share of today's budget that counts as "close". Defaults to 80%. */
   warnAtPct?: number;
   /** Applied before dividing, exactly as in `dailyAllowance`. */
   convertMinor?: (minor: number) => number;
 }): TodayAllowanceResult | null {
-  const { evaluation, spentTodayByCategory, today, warnAtPct = 80 } = params;
+  const {
+    evaluation,
+    spentTodayByCategory,
+    committedTodayByCategory = {},
+    today,
+    warnAtPct = 80,
+  } = params;
   const convert = params.convertMinor ?? ((minor: number) => minor);
 
   const { y, m } = parseIsoMonth(evaluation.month);
@@ -380,19 +404,25 @@ export function todayAllowance(params: {
 
   const lines = evaluation.lines.map((line): TodayAllowanceLine => {
     const spentToday = spentTodayByCategory[line.categoryId] ?? 0;
-    // `remainingMinor` has already had today's spending taken off it, so adding
-    // it back is what recovers the position this day actually started from.
-    const startOfDayRemaining = line.remainingMinor + spentToday;
+    // Never treat more as committed than was actually spent in the category.
+    const committedToday = Math.min(committedTodayByCategory[line.categoryId] ?? 0, spentToday);
+    const variableToday = spentToday - committedToday;
+
+    // `remainingMinor` has had all of today's spending taken off it. Adding
+    // back only the discretionary part recovers the pool this day started with
+    // — a subscription that landed today is gone from the month either way.
+    const startOfDayRemaining = line.remainingMinor + variableToday;
     const allowanceMinor = Math.max(
       Math.floor(convert(startOfDayRemaining) / daysRemainingInclusive),
       0,
     );
-    const spentTodayMinor = convert(spentToday);
+    const spentTodayMinor = convert(variableToday);
 
     return {
       categoryId: line.categoryId,
       allowanceMinor,
       spentTodayMinor,
+      committedTodayMinor: convert(committedToday),
       remainingTodayMinor: allowanceMinor - spentTodayMinor,
       utilisationPct: allowanceMinor > 0 ? pct(spentTodayMinor, allowanceMinor) : 0,
       status: statusFor(spentTodayMinor, allowanceMinor),
@@ -400,9 +430,17 @@ export function todayAllowance(params: {
   });
 
   const spentTodayTotal = Object.values(spentTodayByCategory).reduce((s, v) => s + v, 0);
-  const totalSpentTodayMinor = convert(spentTodayTotal);
+  const committedTodayTotal = Object.entries(committedTodayByCategory).reduce(
+    (sum, [categoryId, amount]) => sum + Math.min(amount, spentTodayByCategory[categoryId] ?? 0),
+    0,
+  );
+  const variableTodayTotal = Math.max(spentTodayTotal - committedTodayTotal, 0);
+
+  const totalSpentTodayMinor = convert(variableTodayTotal);
   const totalAllowanceMinor = Math.max(
-    Math.floor(convert(evaluation.totalRemainingMinor + spentTodayTotal) / daysRemainingInclusive),
+    Math.floor(
+      convert(evaluation.totalRemainingMinor + variableTodayTotal) / daysRemainingInclusive,
+    ),
     0,
   );
 
@@ -410,6 +448,7 @@ export function todayAllowance(params: {
     daysRemainingInclusive,
     totalAllowanceMinor,
     totalSpentTodayMinor,
+    totalCommittedTodayMinor: convert(committedTodayTotal),
     totalRemainingTodayMinor: totalAllowanceMinor - totalSpentTodayMinor,
     status: statusFor(totalSpentTodayMinor, totalAllowanceMinor),
     lines,
