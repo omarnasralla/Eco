@@ -9,14 +9,13 @@ import {
   ACCOUNT_KINDS,
   ACCOUNT_KIND_LABELS,
   accountSchema,
-  formatMoney,
   toMajorUnits,
   type AccountDto,
   type AccountInput,
 } from '@eco/shared';
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
-import { useMoneyFormat } from '@/lib/auth-provider';
+import { useDisplayCurrency } from '@/lib/display-currency';
 import { formatDate } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -43,7 +42,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function AccountsPage() {
-  const { currency, locale } = useMoneyFormat();
+  const { currency, locale, format: money } = useDisplayCurrency();
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<AccountDto | null>(null);
@@ -92,7 +91,7 @@ export default function AccountsPage() {
           <Card className="p-4">
             <p className="text-sm text-muted-foreground">Total held</p>
             <p className="tabular mt-2 text-3xl font-semibold">
-              {formatMoney(summary.data?.totalMinor ?? 0, currency, { locale })}
+              {money(summary.data?.totalMinor ?? 0)}
             </p>
             {summary.data && summary.data.unconvertedCount > 0 ? (
               <p className="mt-1 text-xs text-muted-foreground">
@@ -136,7 +135,7 @@ export default function AccountsPage() {
                             account.balanceMinor < 0 ? 'text-destructive' : ''
                           }`}
                         >
-                          {formatMoney(account.balanceMinor, account.currency, { locale })}
+                          {money(account.balanceMinor, account.currency)}
                         </p>
                         {account.currency !== currency ? (
                           <p className="text-xs text-muted-foreground">{account.currency}</p>

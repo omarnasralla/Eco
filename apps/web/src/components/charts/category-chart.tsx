@@ -1,10 +1,9 @@
 'use client';
 
 import type { CategoryBreakdownDto } from '@eco/shared';
-import { useMoneyFormat } from '@/lib/auth-provider';
+import { useChartMoney } from '@/lib/display-currency';
 import { cn } from '@/lib/utils';
 import { useChartTheme } from './chart-theme';
-import { moneyFormatter } from './chart-tooltip';
 
 /**
  * Spending by category, as a horizontal bar list.
@@ -28,8 +27,7 @@ export function CategoryChart({
   className?: string;
 }) {
   const theme = useChartTheme();
-  const { currency, locale } = useMoneyFormat();
-  const money = moneyFormatter(currency, locale);
+  const money = useChartMoney();
 
   if (data.length === 0) {
     return (

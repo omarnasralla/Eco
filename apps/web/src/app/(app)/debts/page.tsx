@@ -9,7 +9,6 @@ import {
   DEBT_TYPES,
   debtPaymentSchema,
   debtSchema,
-  formatMoney,
   toMajorUnits,
   toMinorUnits,
   type DebtDto,
@@ -19,7 +18,7 @@ import {
 } from '@eco/shared';
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
-import { useMoneyFormat } from '@/lib/auth-provider';
+import { useDisplayCurrency } from '@/lib/display-currency';
 import { formatDate } from '@/lib/utils';
 import { useChartTheme } from '@/components/charts/chart-theme';
 import { PayoffChart } from '@/components/charts/payoff-chart';
@@ -50,9 +49,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export default function DebtsPage() {
-  const { currency, locale } = useMoneyFormat();
+  const { currency, locale, format: money } = useDisplayCurrency();
   const theme = useChartTheme();
-  const money = (minor: number) => formatMoney(minor, currency, { locale });
 
   const debts = useQuery({ queryKey: queryKeys.debts, queryFn: fetchers.debts });
 
@@ -173,10 +171,10 @@ export default function DebtsPage() {
                               in that currency. Formatting it with the base
                               symbol would relabel £5,000 as $5,000. */}
                           <p className="tabular text-sm font-semibold">
-                            {formatMoney(debt.currentBalanceMinor, debt.currency, { locale })}
+                            {money(debt.currentBalanceMinor, debt.currency)}
                           </p>
                           <p className="tabular text-xs text-muted-foreground">
-                            min {formatMoney(debt.minimumPaymentMinor, debt.currency, { locale })}
+                            min {money(debt.minimumPaymentMinor, debt.currency)}
                           </p>
                           {debt.currency !== currency ? (
                             <p className="tabular text-xs text-muted-foreground">
@@ -768,6 +766,7 @@ function PaymentDialog({
   locale: string;
   onSaved: () => void;
 }) {
+  const { format: money } = useDisplayCurrency();
   const [amount, setAmount] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   // Local state for the same Radix-empty-value reason as the account picker
@@ -823,7 +822,7 @@ function PaymentDialog({
           <DialogTitle>Record a payment</DialogTitle>
           <DialogDescription>
             Against {debt.name} — balance{' '}
-            {formatMoney(debt.currentBalanceMinor, debt.currency, { locale })}.
+            {money(debt.currentBalanceMinor, debt.currency)}.
           </DialogDescription>
         </DialogHeader>
 

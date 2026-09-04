@@ -43,6 +43,8 @@ export interface UserDto {
   role: UserRole;
   country: string | null;
   currency: string;
+  /** The other currency to display in and flip to. Null when unset. */
+  secondaryCurrency: string | null;
   timezone: string;
   locale: string;
   emailVerified: boolean;

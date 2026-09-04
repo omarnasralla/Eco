@@ -17,6 +17,7 @@ export function toUserDto(user: User): UserDto {
     role: user.role,
     country: user.country,
     currency: user.currency,
+    secondaryCurrency: user.secondaryCurrency,
     timezone: user.timezone,
     locale: user.locale,
     emailVerified: user.emailVerified,

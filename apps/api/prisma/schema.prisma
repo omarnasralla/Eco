@@ -194,6 +194,10 @@ model User {
   country  String? @db.Char(2)
   /// The user's base currency. Every cross-currency figure is normalised here.
   currency String  @default("USD") @db.Char(3)
+  /// The other currency they think in — what they actually spend, when that is
+  /// not the base. Display only: nothing is stored in it, and unlike `currency`
+  /// changing it rewrites nothing. Null when one currency is enough.
+  secondaryCurrency String? @db.Char(3)
   timezone String  @default("UTC") @db.VarChar(64)
   locale   String  @default("en-US") @db.VarChar(16)
 

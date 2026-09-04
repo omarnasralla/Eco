@@ -137,6 +137,8 @@ export const updateProfileSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   country: z.string().trim().length(2).optional(),
   currency: currencyCode.optional(),
+  /** Null clears it; a display preference, so it rebases nothing. */
+  secondaryCurrency: currencyCode.nullish(),
   timezone: z.string().trim().max(64).optional(),
   locale: z.string().trim().max(16).optional(),
   financialGoals: financialGoalPrefsSchema.optional(),

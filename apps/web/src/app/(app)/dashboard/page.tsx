@@ -12,9 +12,8 @@ import {
   TrendingUp,
   Wallet,
 } from 'lucide-react';
-import { formatMoney } from '@eco/shared';
 import { fetchers, queryKeys } from '@/lib/queries';
-import { useMoneyFormat } from '@/lib/auth-provider';
+import { useDisplayCurrency } from '@/lib/display-currency';
 import { formatDate, relativeDays } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/page-header';
 import { StatTile } from '@/components/dashboard/stat-tile';
@@ -31,7 +30,7 @@ import { Button } from '@/components/ui/button';
 const currentMonth = () => new Date().toISOString().slice(0, 7);
 
 export default function DashboardPage() {
-  const { currency, locale } = useMoneyFormat();
+  const { currency, locale, format: money } = useDisplayCurrency();
   const month = currentMonth();
 
   // Each widget owns its own query so a slow forecast never blocks the
@@ -59,7 +58,6 @@ export default function DashboardPage() {
     queryFn: () => fetchers.recommendations(),
   });
 
-  const money = (minor: number) => formatMoney(minor, currency, { locale });
   const data = summary.data;
 
   return (
@@ -257,7 +255,7 @@ export default function DashboardPage() {
                         both — printing a 930 SAR subscription as $930.00, a
                         bill nearly four times the size of the real one. */}
                     <span className="tabular shrink-0 text-sm font-medium">
-                      {formatMoney(bill.amountMinor, bill.currency, { locale })}
+                      {money(bill.amountMinor, bill.currency)}
                     </span>
                   </li>
                 ))}

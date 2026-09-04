@@ -64,7 +64,7 @@ export default function SettingsPage() {
 
             <div className="space-y-2">
               <label htmlFor="currency" className="text-sm font-medium">
-                Base currency
+                Primary currency
               </label>
               <Select
                 value={user?.currency ?? 'USD'}
@@ -85,8 +85,43 @@ export default function SettingsPage() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Totals and charts use this. Past transactions keep the rate from the day they
-                happened, so your history stays consistent.
+                Everything is stored and totalled in this. Past transactions keep the rate from
+                the day they happened, so your history stays consistent.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="secondary-currency" className="text-sm font-medium">
+                Secondary currency
+              </label>
+              <Select
+                value={user?.secondaryCurrency ?? 'none'}
+                onValueChange={async (value) => {
+                  if (!value) return;
+                  await api.patch('/users/me', {
+                    secondaryCurrency: value === 'none' ? null : value,
+                  });
+                  await refreshUser();
+                }}
+              >
+                <SelectTrigger id="secondary-currency" className="sm:w-72">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {CURRENCIES.filter((item) => item.code !== (user?.currency ?? 'USD')).map(
+                    (item) => (
+                      <SelectItem key={item.code} value={item.code}>
+                        {item.symbol} {item.code} — {item.name}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                The currency you actually spend in. Amounts are shown in this by default, and the
+                button at the top of each page flips them to your primary. Nothing is stored in
+                it, so changing it rewrites nothing.
               </p>
             </div>
           </CardContent>

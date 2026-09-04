@@ -28,6 +28,10 @@ export class UsersService {
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.country !== undefined ? { country: input.country } : {}),
         ...(input.currency !== undefined ? { currency: input.currency } : {}),
+        // Display only: no rebasing, because nothing is stored in it.
+        ...(input.secondaryCurrency !== undefined
+          ? { secondaryCurrency: input.secondaryCurrency }
+          : {}),
         ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
         ...(input.locale !== undefined ? { locale: input.locale } : {}),
         ...(input.financialGoals !== undefined ? { financialGoals: input.financialGoals } : {}),

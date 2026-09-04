@@ -1,8 +1,7 @@
 'use client';
 
 import type { LucideIcon } from 'lucide-react';
-import { formatMoney } from '@eco/shared';
-import { useMoneyFormat } from '@/lib/auth-provider';
+import { useDisplayCurrency } from '@/lib/display-currency';
 import { useChartTheme } from '@/components/charts/chart-theme';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -38,7 +37,7 @@ export function StatTile({
   loading?: boolean;
   className?: string;
 }) {
-  const { currency, locale } = useMoneyFormat();
+  const { format: money } = useDisplayCurrency();
   const theme = useChartTheme();
 
   if (loading) {
@@ -63,7 +62,7 @@ export function StatTile({
       </div>
 
       <p className="tabular mt-2 text-2xl font-semibold tracking-tight">
-        {formatMoney(valueMinor, currency, { locale })}
+        {money(valueMinor)}
       </p>
 
       {hasDelta ? (

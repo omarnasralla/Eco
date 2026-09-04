@@ -61,7 +61,3 @@ export function ChartTooltip({
 }
 
 /** Builds a money formatter bound to the user's currency and locale. */
-export function moneyFormatter(currency: string, locale: string) {
-  return (minor: number, compact = false) =>
-    formatMoney(minor, currency, { locale, compact });
-}

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { CalendarClock } from 'lucide-react';
 import { formatMoney, type DailyAllowanceLineDto } from '@eco/shared';
 import { fetchers, queryKeys } from '@/lib/queries';
-import { useMoneyFormat } from '@/lib/auth-provider';
+import { useDisplayCurrency } from '@/lib/display-currency';
 import { useChartTheme } from '@/components/charts/chart-theme';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -33,7 +33,7 @@ const STATUS_VARIANT = {
  * month: a daily ceiling of nothing is not the same as no ceiling at all.
  */
 export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
-  const { currency, locale } = useMoneyFormat();
+  const { currency, baseCurrency, locale, format } = useDisplayCurrency();
   const theme = useChartTheme();
   const month = new Date().toISOString().slice(0, 7);
 
@@ -41,9 +41,12 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
   // in. Reading a browser preference here made the same account show dollars
   // on one device and riyals on another, and let opening a single
   // foreign-currency expense redefine it.
+  // Converted server-side, not here: the allowance is floored after dividing,
+  // and converting that floored figure would round a second time. The server
+  // converts before it divides.
   const budget = useQuery({
-    queryKey: queryKeys.budget(month),
-    queryFn: () => fetchers.budget(month),
+    queryKey: queryKeys.budget(month, currency),
+    queryFn: () => fetchers.budget(month, currency),
   });
 
   if (budget.isLoading) return <Skeleton className="mb-4 h-28 w-full" />;
@@ -160,7 +163,7 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
             which is not necessarily the one the allowances are quoted in. */}
         {excludedMinor > 0 ? (
           <p className="mt-3 text-xs text-muted-foreground">
-            {formatMoney(excludedMinor, currency, { locale })} of this
+            {format(excludedMinor, baseCurrency)} of this
             month&rsquo;s spending is kept outside these limits.
           </p>
         ) : null}
@@ -168,9 +171,9 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
         {/* The budget itself is still kept in the base currency, and the
             Budgets tab still reports it there. Saying so is the difference
             between a helpful conversion and two screens that disagree. */}
-        {allowance.currency === currency ? null : (
+        {allowance.currency === baseCurrency ? null : (
           <p className="mt-1 text-xs text-muted-foreground">
-            Converted from your {currency} budget at today&rsquo;s rate.
+            Converted from your {baseCurrency} budget at today&rsquo;s rate.
           </p>
         )}
       </CardContent>
