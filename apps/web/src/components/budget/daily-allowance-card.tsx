@@ -54,6 +54,7 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
 
   const allowance = budget.data?.dailyAllowance;
   if (!allowance || allowance.lines.length === 0) return null;
+  const excludedMinor = budget.data?.excludedFromBudgetMinor ?? 0;
 
   // The server decides what it could actually convert; trusting the requested
   // code here would label riyals as dollars whenever a rate was unavailable.
@@ -149,11 +150,22 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
           </li>
         </ul>
 
+        {/* Excluded spend is stated, not just subtracted. "Within budget" is
+            worth nothing if an amount the user cannot see was set aside to
+            make it true — and the figure is in the budget's own currency,
+            which is not necessarily the one the allowances are quoted in. */}
+        {excludedMinor > 0 ? (
+          <p className="mt-3 text-xs text-muted-foreground">
+            {formatMoney(excludedMinor, currency, { locale })} of this
+            month&rsquo;s spending is kept outside these limits.
+          </p>
+        ) : null}
+
         {/* The budget itself is still kept in the base currency, and the
             Budgets tab still reports it there. Saying so is the difference
             between a helpful conversion and two screens that disagree. */}
         {allowance.currency === currency ? null : (
-          <p className="mt-3 text-xs text-muted-foreground">
+          <p className="mt-1 text-xs text-muted-foreground">
             Converted from your {currency} budget at today&rsquo;s rate.
           </p>
         )}

@@ -120,6 +120,8 @@ export interface ExpenseDto {
   notes: string | null;
   isRecurring: boolean;
   recurringFrequency: Frequency | null;
+  /** Spent, but kept out of budget limits. Still counted in balances. */
+  excludedFromBudget: boolean;
   tags: string[];
   createdAt: string;
   updatedAt: string;
@@ -253,6 +255,12 @@ export interface BudgetDto {
   /** Extrapolated month-end spend from the pace so far. */
   projectedSpendMinor: number;
   daysRemaining: number;
+  /**
+   * Spend this month that was deliberately kept out of the budget. Reported so
+   * the exclusion can be audited — "within budget" means little if an unshown
+   * amount was set aside to make it true.
+   */
+  excludedFromBudgetMinor: number;
   /**
    * What is left, restated as a daily ceiling per category. Null for any month
    * that is not in progress — a finished month has no days left to pace.

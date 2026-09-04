@@ -60,10 +60,12 @@ export class BudgetsService {
       });
       if (!budget) return null;
 
-      const [spendByCategory, committedSpendByCategory] = await Promise.all([
-        this.spendByCategory(userId, month),
-        this.committedSpendByCategory(userId, month),
-      ]);
+      const [spendByCategory, committedSpendByCategory, excludedFromBudgetMinor] =
+        await Promise.all([
+          this.spendByCategory(userId, month),
+          this.committedSpendByCategory(userId, month),
+          this.excludedTotal(userId, month),
+        ]);
 
       const evaluation = evaluateBudget({
         month,
@@ -121,6 +123,7 @@ export class BudgetsService {
         lines,
         projectedSpendMinor: evaluation.projectedSpendMinor,
         daysRemaining: evaluation.daysRemaining,
+        excludedFromBudgetMinor,
         dailyAllowance: allowance && {
           currency: convertMinor ? allowanceCurrency : budget.currency,
           daysRemainingInclusive: allowance.daysRemainingInclusive,
@@ -303,6 +306,9 @@ export class BudgetsService {
         userId,
         deletedAt: null,
         date: { gte: start, lt: end },
+        // Spent, but never something a budget was meant to cover. The money is
+        // still gone from the account; it just is not evidence about pacing.
+        excludedFromBudget: false,
         ...(recurringOnly ? { isRecurring: true } : {}),
       },
       _sum: { baseAmountMinor: true },
@@ -311,6 +317,27 @@ export class BudgetsService {
     return Object.fromEntries(
       rows.map((row) => [row.categoryId, toNumber(row._sum.baseAmountMinor ?? BigInt(0))]),
     );
+  }
+
+  /**
+   * What the month's budget deliberately ignored.
+   *
+   * Reported rather than merely subtracted. A budget that silently drops
+   * spending is worse than one that overstates it: the user cannot audit a
+   * number they are never shown, and "you are within budget" means nothing if
+   * an arbitrary amount was quietly set aside to make it true.
+   */
+  private async excludedTotal(userId: string, month: string): Promise<number> {
+    const result = await this.prisma.expense.aggregate({
+      where: {
+        userId,
+        deletedAt: null,
+        date: { gte: monthToDate(month), lt: monthToDate(addMonths(month, 1)) },
+        excludedFromBudget: true,
+      },
+      _sum: { baseAmountMinor: true },
+    });
+    return toNumber(result._sum.baseAmountMinor ?? BigInt(0));
   }
 
   /**

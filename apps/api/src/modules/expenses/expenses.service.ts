@@ -24,6 +24,7 @@ function toDto(expense: ExpenseRow): ExpenseDto {
     merchant: expense.merchant,
     notes: expense.notes,
     isRecurring: expense.isRecurring,
+    excludedFromBudget: expense.excludedFromBudget,
     recurringFrequency: expense.recurringFrequency,
     tags: expense.tags,
     createdAt: expense.createdAt.toISOString(),
@@ -220,6 +221,7 @@ export class ExpensesService {
         merchant: input.merchant ?? null,
         notes: input.notes ?? null,
         isRecurring: input.isRecurring,
+        excludedFromBudget: input.excludedFromBudget ?? false,
         recurringFrequency: input.recurringFrequency ?? null,
         tags: input.tags,
       },
@@ -269,6 +271,9 @@ export class ExpensesService {
         ...(input.merchant !== undefined ? { merchant: input.merchant } : {}),
         ...(input.notes !== undefined ? { notes: input.notes } : {}),
         ...(input.isRecurring !== undefined ? { isRecurring: input.isRecurring } : {}),
+        ...(input.excludedFromBudget !== undefined
+          ? { excludedFromBudget: input.excludedFromBudget }
+          : {}),
         ...(input.recurringFrequency !== undefined
           ? { recurringFrequency: input.recurringFrequency }
           : {}),
@@ -317,6 +322,7 @@ export class ExpensesService {
         merchant: input.merchant ?? null,
         notes: input.notes ?? null,
         isRecurring: input.isRecurring,
+        excludedFromBudget: input.excludedFromBudget ?? false,
         recurringFrequency: input.recurringFrequency ?? null,
         tags: input.tags,
       })),

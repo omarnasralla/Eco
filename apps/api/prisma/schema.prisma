@@ -474,6 +474,13 @@ model Expense {
   merchant    String?  @db.VarChar(160)
   notes       String?  @db.Text
 
+  /// Spent, but outside what any budget was meant to cover — a reimbursable
+  /// cost, a one-off, a savings transfer that turned out to be spending. Still
+  /// counted in balances, cash flow and net worth; only budget limits skip it,
+  /// and the budget reports the excluded total so it is visible rather than
+  /// silently dropped.
+  excludedFromBudget Boolean @default(false)
+
   isRecurring        Boolean    @default(false)
   recurringFrequency Frequency?
   /// Set when the row was generated from a detected recurring pattern.

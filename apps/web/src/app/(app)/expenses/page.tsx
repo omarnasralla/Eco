@@ -159,6 +159,7 @@ function ExpensesContent() {
                     <p className="truncate text-xs text-muted-foreground">
                       {expense.category?.name} · {formatDate(expense.date, locale)}
                       {expense.isRecurring ? ' · recurring' : ''}
+                      {expense.excludedFromBudget ? ' · outside budget' : ''}
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
@@ -270,6 +271,7 @@ function ExpenseDialog({
       categoryId: '',
       date: new Date().toISOString().slice(0, 10),
       isRecurring: false,
+      excludedFromBudget: false,
       tags: [],
     },
   });
@@ -292,6 +294,7 @@ function ExpenseDialog({
         merchant: expense.merchant ?? '',
         notes: expense.notes ?? '',
         isRecurring: expense.isRecurring,
+        excludedFromBudget: expense.excludedFromBudget,
         tags: expense.tags ?? [],
       });
       setAccountId(expense.accountId);
@@ -495,6 +498,31 @@ function ExpenseDialog({
                 <option key={name} value={name} />
               ))}
             </datalist>
+          </div>
+
+          {/* Not a way to make a bad month look good: the money still leaves
+              the account and still counts in balances and net worth. It exists
+              because a budget answers "am I pacing my discretionary spending?",
+              and a reimbursable cost or a one-off transfer is real spending
+              that answers a different question. Counting it reports the month
+              as blown and drives every daily allowance to zero, which teaches
+              people to distrust the budget rather than act on it. */}
+          <div className="flex items-start gap-3 rounded-md border p-3">
+            <input
+              id="excluded-from-budget"
+              type="checkbox"
+              className="mt-0.5 size-4 shrink-0 accent-primary"
+              {...register('excludedFromBudget')}
+            />
+            <div className="space-y-1">
+              <Label htmlFor="excluded-from-budget" className="font-normal">
+                Keep out of budget limits
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Still counted in your account balance and net worth — it just
+                will not count against a budget.
+              </p>
+            </div>
           </div>
 
           {formError ? (

@@ -190,6 +190,8 @@ export const expenseSchema = z.object({
   notes: z.string().trim().max(2000).nullish(),
   isRecurring: z.boolean().default(false),
   recurringFrequency: z.enum(FREQUENCIES).nullish(),
+  /** Spent, but outside what any budget was meant to cover. */
+  excludedFromBudget: z.boolean().default(false),
   tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
 });
 
