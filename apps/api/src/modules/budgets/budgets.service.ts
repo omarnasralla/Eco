@@ -102,7 +102,8 @@ export class BudgetsService {
       // Restate the same evaluation as a per-day ceiling. Derived from the
       // evaluation rather than recomputed, so the pacing can never disagree
       // with the remaining figures shown beside it.
-      const allowanceCurrency = displayCurrency ?? budget.currency;
+      const allowanceCurrency =
+        displayCurrency ?? (await this.spendingCurrency(userId)) ?? budget.currency;
       const convertMinor = await this.displayConverter(budget.currency, allowanceCurrency);
       const allowance = dailyAllowance({
         evaluation,
@@ -338,6 +339,37 @@ export class BudgetsService {
       _sum: { baseAmountMinor: true },
     });
     return toNumber(result._sum.baseAmountMinor ?? BigInt(0));
+  }
+
+  /**
+   * The currency this user actually transacts in, or null if there is nothing
+   * to go on.
+   *
+   * A daily ceiling is only actionable in the money that gets handed over, and
+   * the base currency is frequently not that: reporting in USD while paying in
+   * SAR is the ordinary case for anyone living outside their reporting
+   * currency. Asking the browser was the first attempt and was wrong — it made
+   * the figure depend on per-device state that opening a foreign-currency row
+   * could flip, and left the same account reading differently on a phone and a
+   * laptop.
+   *
+   * By count, not by amount. One large purchase abroad should not restate a
+   * month of local spending; what matters is which currency the user is
+   * routinely in. Ninety days rather than this month, so the answer does not
+   * swing on whichever row happens to land first in a new month.
+   */
+  private async spendingCurrency(userId: string): Promise<string | null> {
+    const since = new Date();
+    since.setUTCDate(since.getUTCDate() - 90);
+
+    const rows = await this.prisma.expense.groupBy({
+      by: ['currency'],
+      where: { userId, deletedAt: null, date: { gte: since } },
+      _count: { _all: true },
+      orderBy: { _count: { currency: 'desc' } },
+      take: 1,
+    });
+    return rows[0]?.currency ?? null;
   }
 
   /**

@@ -21,7 +21,9 @@ function supported(code: string | null): code is string {
  * convenience only — nothing is stored on the server, and the base currency in
  * Settings still decides what totals are reported in.
  */
-export function useEntryCurrency(baseCurrency: string): [string, (next: string) => void] {
+export function useEntryCurrency(
+  baseCurrency: string,
+): [string, (next: string, persist?: boolean) => void] {
   // Starts at the base currency so the server-rendered markup and the first
   // client render agree; the remembered value arrives in the effect below.
   const [currency, setCurrency] = useState(baseCurrency);
@@ -36,8 +38,16 @@ export function useEntryCurrency(baseCurrency: string): [string, (next: string) 
     setCurrency(supported(stored) ? stored : baseCurrency);
   }, [baseCurrency]);
 
-  const remember = useCallback((next: string) => {
+  /**
+   * `persist` is opt-out for a reason: editing an existing expense has to show
+   * the currency that expense was entered in, and that is not a statement
+   * about what the next new one should default to. Persisting it there let
+   * opening one foreign-currency row silently redefine the default for
+   * everything after it.
+   */
+  const remember = useCallback((next: string, persist = true) => {
     setCurrency(next);
+    if (!persist) return;
     try {
       window.localStorage.setItem(STORAGE_KEY, next);
     } catch {

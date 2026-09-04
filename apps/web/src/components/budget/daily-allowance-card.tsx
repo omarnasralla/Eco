@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import { CalendarClock } from 'lucide-react';
 import { formatMoney, type DailyAllowanceLineDto } from '@eco/shared';
 import { fetchers, queryKeys } from '@/lib/queries';
-import { useEntryCurrency } from '@/lib/entry-currency';
 import { useMoneyFormat } from '@/lib/auth-provider';
 import { useChartTheme } from '@/components/charts/chart-theme';
 import { Badge } from '@/components/ui/badge';
@@ -38,16 +37,13 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
   const theme = useChartTheme();
   const month = new Date().toISOString().slice(0, 7);
 
-  // Quote the ceiling in the money the user actually hands over. Someone who
-  // reports in dollars but pays in riyals cannot act on "$3.96 a day" without
-  // doing the arithmetic themselves at the till, which is the one place they
-  // will not do it. The entry currency is the honest signal for this: it is
-  // whatever they last typed an amount in.
-  const [entryCurrency] = useEntryCurrency(currency);
-
+  // The server picks the currency, from what this account actually transacts
+  // in. Reading a browser preference here made the same account show dollars
+  // on one device and riyals on another, and let opening a single
+  // foreign-currency expense redefine it.
   const budget = useQuery({
-    queryKey: queryKeys.budget(month, entryCurrency),
-    queryFn: () => fetchers.budget(month, entryCurrency),
+    queryKey: queryKeys.budget(month),
+    queryFn: () => fetchers.budget(month),
   });
 
   if (budget.isLoading) return <Skeleton className="mb-4 h-28 w-full" />;
@@ -95,17 +91,20 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
               <span className="min-w-0 flex-1 truncate text-sm">{line.categoryName}</span>
 
               {line.status === 'EXHAUSTED' ? (
-                <span className="tabular text-sm text-muted-foreground">
+                <span className="tabular shrink-0 text-sm text-muted-foreground">
                   {money(Math.abs(line.remainingMinor))} over
                 </span>
               ) : (
-                <span className="tabular text-sm font-medium">
+                <span className="tabular shrink-0 text-sm font-medium">
                   {money(line.allowanceMinor)}
                   <span className="font-normal text-muted-foreground">/day</span>
                 </span>
               )}
 
-              <Badge variant={STATUS_VARIANT[line.status]} className="w-16 justify-center">
+              <Badge
+                variant={STATUS_VARIANT[line.status]}
+                className="w-14 shrink-0 justify-center px-1 sm:w-16 sm:px-2.5"
+              >
                 {STATUS_LABEL[line.status]}
               </Badge>
             </li>
@@ -120,20 +119,25 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
               inferred from whatever the filter happens to be. */}
           <li className="flex items-center gap-3 border-t pt-2">
             <span aria-hidden className="size-2.5 shrink-0" />
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">
-              All categories
+            {/* Label and remainder stack rather than sharing one truncating
+                line. Inline, a phone clipped the whole thing to "All
+                categories · S…", losing the number the row exists to show —
+                and a truncated amount is worse than no amount, because it
+                still looks like one. */}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">All categories</span>
               {/* Spending outside every budgeted category still counts against
                   the month's total, so the total can be exhausted while each
                   line above it still has room. Printing "-696.38 left" and a
                   0.00 daily figure states that as though it were an allowance;
                   it is an overspend, and it reads as one. */}
-              <span className="ml-1 font-normal text-muted-foreground">
+              <span className="block text-xs text-muted-foreground">
                 {allowance.totalRemainingMinor > 0
-                  ? `· ${money(allowance.totalRemainingMinor)} left`
-                  : '· over budget'}
+                  ? `${money(allowance.totalRemainingMinor)} left`
+                  : 'over budget'}
               </span>
             </span>
-            <span className="tabular text-sm font-semibold">
+            <span className="tabular shrink-0 text-sm font-semibold">
               {allowance.totalRemainingMinor > 0 ? (
                 <>
                   {money(allowance.totalAllowanceMinor)}
@@ -146,7 +150,7 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
               )}
             </span>
             {/* Spacer matching the status badges, so the amounts stay aligned. */}
-            <span aria-hidden className="w-16" />
+            <span aria-hidden className="w-14 shrink-0 sm:w-16" />
           </li>
         </ul>
 

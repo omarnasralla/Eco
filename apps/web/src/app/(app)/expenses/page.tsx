@@ -285,7 +285,8 @@ function ExpenseDialog({
     setConfirmingDelete(false);
     if (expense) {
       setAmount(String(toMajorUnits(expense.amountMinor, expense.currency)));
-      setEntryCurrency(expense.currency);
+      // Not persisted: this is what the row was entered in, not a new default.
+      setEntryCurrency(expense.currency, false);
       reset({
         amountMinor: expense.amountMinor,
         currency: expense.currency,
@@ -407,7 +408,7 @@ function ExpenseDialog({
               setValue('amountMinor', minorUnits, { shouldValidate: true });
             }}
             currency={entryCurrency}
-            onCurrencyChange={setEntryCurrency}
+            onCurrencyChange={(next) => setEntryCurrency(next, !editing)}
             baseCurrency={baseCurrency}
             locale={locale}
             error={errors.amountMinor ? 'Enter an amount above zero.' : undefined}
