@@ -121,13 +121,28 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
             <span aria-hidden className="size-2.5 shrink-0" />
             <span className="min-w-0 flex-1 truncate text-sm font-medium">
               All categories
+              {/* Spending outside every budgeted category still counts against
+                  the month's total, so the total can be exhausted while each
+                  line above it still has room. Printing "-696.38 left" and a
+                  0.00 daily figure states that as though it were an allowance;
+                  it is an overspend, and it reads as one. */}
               <span className="ml-1 font-normal text-muted-foreground">
-                · {money(allowance.totalRemainingMinor)} left
+                {allowance.totalRemainingMinor > 0
+                  ? `· ${money(allowance.totalRemainingMinor)} left`
+                  : '· over budget'}
               </span>
             </span>
             <span className="tabular text-sm font-semibold">
-              {money(allowance.totalAllowanceMinor)}
-              <span className="font-normal text-muted-foreground">/day</span>
+              {allowance.totalRemainingMinor > 0 ? (
+                <>
+                  {money(allowance.totalAllowanceMinor)}
+                  <span className="font-normal text-muted-foreground">/day</span>
+                </>
+              ) : (
+                <span className="text-destructive">
+                  {money(Math.abs(allowance.totalRemainingMinor))} over
+                </span>
+              )}
             </span>
             {/* Spacer matching the status badges, so the amounts stay aligned. */}
             <span aria-hidden className="w-16" />
