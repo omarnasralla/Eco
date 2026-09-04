@@ -251,8 +251,13 @@ export default function DashboardPage() {
                         {formatDate(bill.dueDate, locale)} · {relativeDays(bill.daysUntilDue)}
                       </p>
                     </div>
+                    {/* In the bill's own currency, not the base one. A debt in
+                        USD and a subscription in SAR sit in this list side by
+                        side, and `money()` would have stamped a dollar sign on
+                        both — printing a 930 SAR subscription as $930.00, a
+                        bill nearly four times the size of the real one. */}
                     <span className="tabular shrink-0 text-sm font-medium">
-                      {money(bill.amountMinor)}
+                      {formatMoney(bill.amountMinor, bill.currency, { locale })}
                     </span>
                   </li>
                 ))}

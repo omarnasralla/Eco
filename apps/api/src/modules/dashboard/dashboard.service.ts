@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  addDays,
   addMonths,
   emergencyFundTargetMinor,
   monthRange,
@@ -266,7 +267,14 @@ export class DashboardService {
 
     for (const expense of recurring) {
       // Project the next occurrence from the day-of-month it last landed on.
-      const dueDate = nextDueDate(today, Number(expense.date.toISOString().slice(8, 10)));
+      //
+      // Search from the day *after* the charge being projected, not from today.
+      // A subscription billed on the 4th, looked at on the 4th, otherwise
+      // matches its own occurrence and is offered back as "due today" — the
+      // bill you have just paid, listed as one you still owe.
+      const lastLanded = expense.date.toISOString().slice(0, 10);
+      const from = lastLanded >= today ? addDays(lastLanded, 1) : today;
+      const dueDate = nextDueDate(from, Number(lastLanded.slice(8, 10)));
       bills.push({
         id: expense.id,
         source: 'RECURRING_EXPENSE',
