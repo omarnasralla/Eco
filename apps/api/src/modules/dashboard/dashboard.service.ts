@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import {
-  addDays,
   addMonths,
   emergencyFundTargetMinor,
   monthRange,
   nextDueDate,
+  nextOccurrence,
   savingsRatePct,
 } from '@eco/core';
 import {
@@ -246,6 +246,7 @@ export class DashboardService {
           amountMinor: true,
           currency: true,
           date: true,
+          recurringFrequency: true,
           category: { select: { color: true } },
         },
       }),
@@ -266,15 +267,20 @@ export class DashboardService {
     });
 
     for (const expense of recurring) {
-      // Project the next occurrence from the day-of-month it last landed on.
-      //
-      // Search from the day *after* the charge being projected, not from today.
-      // A subscription billed on the 4th, looked at on the 4th, otherwise
-      // matches its own occurrence and is offered back as "due today" — the
-      // bill you have just paid, listed as one you still owe.
+      // Project from the charge's own cadence, and never return the occurrence
+      // being projected from: a subscription billed on the 4th and looked at
+      // on the 4th would otherwise match itself and come back as "due today" —
+      // the bill just paid, listed as one still owed.
       const lastLanded = expense.date.toISOString().slice(0, 10);
-      const from = lastLanded >= today ? addDays(lastLanded, 1) : today;
-      const dueDate = nextDueDate(from, Number(lastLanded.slice(8, 10)));
+      const dueDate = nextOccurrence({
+        last: lastLanded,
+        // A row flagged recurring without a cadence is treated as monthly:
+        // that is what every such row created before the field was settable
+        // actually is, and dropping them from the list would hide real bills.
+        frequency: expense.recurringFrequency ?? 'MONTHLY',
+        from: today,
+      });
+      if (!dueDate) continue;
       bills.push({
         id: expense.id,
         source: 'RECURRING_EXPENSE',

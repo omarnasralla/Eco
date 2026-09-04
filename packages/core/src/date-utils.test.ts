@@ -10,6 +10,7 @@ import {
   monthOf,
   monthRange,
   nextDueDate,
+  nextOccurrence,
   startOfMonth,
   weekdayOf,
 } from './date-utils';
@@ -101,5 +102,46 @@ describe('weekdayOf', () => {
   it('returns a UTC weekday index', () => {
     expect(weekdayOf('2026-06-14')).toBe(0); // Sunday
     expect(weekdayOf('2026-06-15')).toBe(1); // Monday
+  });
+});
+
+describe('nextOccurrence', () => {
+  it('never returns the occurrence it was given', () => {
+    // The charge landed today; today is not still upcoming.
+    expect(nextOccurrence({ last: '2026-09-04', frequency: 'MONTHLY', from: '2026-09-04' })).toBe(
+      '2026-10-04',
+    );
+  });
+
+  it('steps weekly and biweekly in days, preserving the weekday', () => {
+    expect(nextOccurrence({ last: '2026-09-04', frequency: 'WEEKLY', from: '2026-09-04' })).toBe(
+      '2026-09-11',
+    );
+    expect(nextOccurrence({ last: '2026-09-04', frequency: 'BIWEEKLY', from: '2026-09-04' })).toBe(
+      '2026-09-18',
+    );
+    // Skips over as many whole steps as it takes to reach `from`.
+    expect(nextOccurrence({ last: '2026-09-04', frequency: 'WEEKLY', from: '2026-09-30' })).toBe(
+      '2026-10-02',
+    );
+  });
+
+  it('clamps a day that a shorter month does not have', () => {
+    expect(nextOccurrence({ last: '2026-01-31', frequency: 'MONTHLY', from: '2026-02-01' })).toBe(
+      '2026-02-28',
+    );
+  });
+
+  it('steps quarterly and yearly', () => {
+    expect(nextOccurrence({ last: '2026-09-04', frequency: 'QUARTERLY', from: '2026-09-05' })).toBe(
+      '2026-12-04',
+    );
+    expect(nextOccurrence({ last: '2026-09-04', frequency: 'YEARLY', from: '2026-09-05' })).toBe(
+      '2027-09-04',
+    );
+  });
+
+  it('has no next occurrence for a one-off', () => {
+    expect(nextOccurrence({ last: '2026-09-04', frequency: 'ONE_TIME', from: '2026-09-04' })).toBeNull();
   });
 });

@@ -5,6 +5,8 @@
  * you end up filing January's rent under December.
  */
 
+import type { Frequency } from '@eco/shared';
+
 export type IsoDate = string; // YYYY-MM-DD
 export type IsoMonth = string; // YYYY-MM
 
@@ -96,6 +98,48 @@ export function monthRange(from: IsoDate, to: IsoDate): IsoMonth[] {
     cursor = addMonths(cursor, 1);
   }
   return out;
+}
+
+/**
+ * The next occurrence of a repeating charge, strictly after `last`, on or
+ * after `from`. Null when the frequency does not repeat.
+ *
+ * `nextDueDate` handles the monthly-on-the-Nth case and nothing else; a weekly
+ * subscription projected through it lands a month out, which is wrong in the
+ * direction that matters — the user is told a bill is far away when it is due
+ * in days.
+ *
+ * Weekly and biweekly step in days from the last occurrence, so the weekday is
+ * preserved. The month-based ones step in months and clamp, so a charge on the
+ * 31st falls on the 30th or 28th rather than skipping those months entirely.
+ */
+export function nextOccurrence(params: {
+  last: IsoDate;
+  frequency: Frequency;
+  from: IsoDate;
+}): IsoDate | null {
+  const { last, frequency, from } = params;
+  if (frequency === 'ONE_TIME') return null;
+
+  if (frequency === 'WEEKLY' || frequency === 'BIWEEKLY') {
+    const step = frequency === 'WEEKLY' ? 7 : 14;
+    const gap = diffDays(last, from);
+    // Always at least one step past `last`, even when `from` is behind it.
+    const steps = gap <= 0 ? 1 : Math.ceil(gap / step) || 1;
+    return addDays(last, steps * step);
+  }
+
+  const period = frequency === 'MONTHLY' ? 1 : frequency === 'QUARTERLY' ? 3 : 12;
+  const dayOfMonth = parseIsoDate(last).d;
+  let cursor = monthOf(last);
+  // Bounded: twelve years of steps is far past any date a user is looking at,
+  // and a loop with no ceiling here would hang the request rather than fail it.
+  for (let i = 0; i < 144; i += 1) {
+    cursor = addMonths(cursor, period);
+    const candidate = dueDateInMonth(cursor, dayOfMonth);
+    if (candidate > last && candidate >= from) return candidate;
+  }
+  return null;
 }
 
 /** Weekday index for an ISO date: 0 = Sunday … 6 = Saturday. */

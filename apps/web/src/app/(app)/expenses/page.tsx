@@ -45,6 +45,19 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 
+/**
+ * ONE_TIME is deliberately absent: a one-off is what an unticked box already
+ * means, and offering it as a cadence invites a row flagged as repeating with
+ * a frequency that says it does not.
+ */
+const RECURRING_FREQUENCIES = [
+  { value: 'WEEKLY', label: 'Weekly' },
+  { value: 'BIWEEKLY', label: 'Every two weeks' },
+  { value: 'MONTHLY', label: 'Monthly' },
+  { value: 'QUARTERLY', label: 'Quarterly' },
+  { value: 'YEARLY', label: 'Yearly' },
+] as const;
+
 function ExpensesContent() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
@@ -271,10 +284,15 @@ function ExpenseDialog({
       categoryId: '',
       date: new Date().toISOString().slice(0, 10),
       isRecurring: false,
+      recurringFrequency: 'MONTHLY',
       excludedFromBudget: false,
       tags: [],
     },
   });
+
+  // Drives the frequency field's visibility; a cadence is meaningless
+  // without the flag, and asking for one up front is noise on every one-off.
+  const isRecurring = watch('isRecurring');
 
   // Editing loads the row's own values, including the currency it was entered
   // in rather than the remembered one — an edit is about this expense, not
@@ -295,6 +313,7 @@ function ExpenseDialog({
         merchant: expense.merchant ?? '',
         notes: expense.notes ?? '',
         isRecurring: expense.isRecurring,
+        recurringFrequency: expense.recurringFrequency ?? 'MONTHLY',
         excludedFromBudget: expense.excludedFromBudget,
         tags: expense.tags ?? [],
       });
@@ -354,6 +373,7 @@ function ExpenseDialog({
         categoryId: lastCategoryId ?? '',
         date: new Date().toISOString().slice(0, 10),
         isRecurring: false,
+        recurringFrequency: 'MONTHLY',
         tags: [],
       });
       setAmount('');
@@ -499,6 +519,55 @@ function ExpenseDialog({
                 <option key={name} value={name} />
               ))}
             </datalist>
+          </div>
+
+          {/* Subscriptions and standing bills. Flagging one keeps it out of the
+              day's discretionary limit — a monthly charge is not a day's
+              choice — feeds "Coming up", and stops the month-end projection
+              reading a single large charge as a daily rate. */}
+          <div className="rounded-md border p-3">
+            <div className="flex items-start gap-3">
+              <input
+                id="is-recurring"
+                type="checkbox"
+                className="mt-0.5 size-4 shrink-0 accent-primary"
+                {...register('isRecurring')}
+              />
+              <div className="space-y-1">
+                <Label htmlFor="is-recurring" className="font-normal">
+                  Repeats
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  A subscription or standing bill, not a one-off purchase.
+                </p>
+              </div>
+            </div>
+
+            {isRecurring ? (
+              <div className="mt-3 space-y-2">
+                <Label htmlFor="recurring-frequency">How often</Label>
+                <Select
+                  value={watch('recurringFrequency') ?? 'MONTHLY'}
+                  onValueChange={(next) =>
+                    next ? setValue('recurringFrequency', next as ExpenseInput['recurringFrequency']) : undefined
+                  }
+                >
+                  <SelectTrigger id="recurring-frequency">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {RECURRING_FREQUENCIES.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Counted from this date, so the next one is projected from here.
+                </p>
+              </div>
+            ) : null}
           </div>
 
           {/* Not a way to make a bad month look good: the money still leaves

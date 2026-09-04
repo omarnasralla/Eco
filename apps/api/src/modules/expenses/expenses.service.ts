@@ -222,7 +222,10 @@ export class ExpensesService {
         notes: input.notes ?? null,
         isRecurring: input.isRecurring,
         excludedFromBudget: input.excludedFromBudget ?? false,
-        recurringFrequency: input.recurringFrequency ?? null,
+        // A cadence only means something on a row that repeats. Storing one
+        // beside isRecurring=false leaves a contradiction for every later
+        // reader to resolve, and they will not all resolve it the same way.
+        recurringFrequency: input.isRecurring ? (input.recurringFrequency ?? 'MONTHLY') : null,
         tags: input.tags,
       },
       include: { category: { select: { id: true, name: true, icon: true, color: true } } },
@@ -274,7 +277,10 @@ export class ExpensesService {
         ...(input.excludedFromBudget !== undefined
           ? { excludedFromBudget: input.excludedFromBudget }
           : {}),
-        ...(input.recurringFrequency !== undefined
+        // Clearing the flag clears the cadence with it, in the same write.
+        ...(input.isRecurring === false
+          ? { recurringFrequency: null }
+          : input.recurringFrequency !== undefined
           ? { recurringFrequency: input.recurringFrequency }
           : {}),
         ...(input.tags !== undefined ? { tags: input.tags } : {}),
@@ -323,7 +329,10 @@ export class ExpensesService {
         notes: input.notes ?? null,
         isRecurring: input.isRecurring,
         excludedFromBudget: input.excludedFromBudget ?? false,
-        recurringFrequency: input.recurringFrequency ?? null,
+        // A cadence only means something on a row that repeats. Storing one
+        // beside isRecurring=false leaves a contradiction for every later
+        // reader to resolve, and they will not all resolve it the same way.
+        recurringFrequency: input.isRecurring ? (input.recurringFrequency ?? 'MONTHLY') : null,
         tags: input.tags,
       })),
     );
