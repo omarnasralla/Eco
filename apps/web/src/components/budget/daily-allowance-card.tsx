@@ -68,7 +68,6 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
       : allowance.lines.filter((line) => line.categoryId === categoryId);
   if (filtered.length === 0) return null;
 
-  const focused = categoryId !== 'all';
   const days = allowance.daysRemainingInclusive;
 
   return (
@@ -84,18 +83,7 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
           </p>
         </div>
 
-        {/* The whole-budget figure only makes sense against the whole budget;
-            with one category in view it would describe something else. */}
-        {focused ? null : (
-          <p className="mt-3 text-sm text-muted-foreground">
-            <span className="tabular text-2xl font-semibold text-foreground">
-              {money(allowance.totalAllowanceMinor)}
-            </span>{' '}
-            a day keeps you inside {money(allowance.totalRemainingMinor)} of remaining budget.
-          </p>
-        )}
-
-        <ul className={focused ? 'mt-3 space-y-2' : 'mt-4 space-y-2'}>
+        <ul className="mt-3 space-y-2">
           {filtered.map((line) => (
             <li key={line.categoryId} className="flex items-center gap-3">
               <span
@@ -121,6 +109,29 @@ export function DailyAllowanceCard({ categoryId }: { categoryId: string }) {
               </Badge>
             </li>
           ))}
+
+          {/* The total is a row rather than a headline so it lands in the same
+              column as the categories, where it can actually be compared with
+              them. It covers the whole budget even when the list above is
+              filtered to one category — hiding it there would drop the one
+              figure that answers "what can I spend today" outright — so it
+              says which categories it counts rather than leaving that to be
+              inferred from whatever the filter happens to be. */}
+          <li className="flex items-center gap-3 border-t pt-2">
+            <span aria-hidden className="size-2.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+              All categories
+              <span className="ml-1 font-normal text-muted-foreground">
+                · {money(allowance.totalRemainingMinor)} left
+              </span>
+            </span>
+            <span className="tabular text-sm font-semibold">
+              {money(allowance.totalAllowanceMinor)}
+              <span className="font-normal text-muted-foreground">/day</span>
+            </span>
+            {/* Spacer matching the status badges, so the amounts stay aligned. */}
+            <span aria-hidden className="w-16" />
+          </li>
         </ul>
 
         {/* The budget itself is still kept in the base currency, and the
