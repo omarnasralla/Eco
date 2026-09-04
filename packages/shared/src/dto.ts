@@ -206,6 +206,33 @@ export interface BudgetLineDto {
   status: 'UNDER' | 'WARNING' | 'OVER';
 }
 
+export type DailyAllowanceStatus = 'ON_TRACK' | 'TIGHT' | 'EXHAUSTED';
+
+export interface DailyAllowanceLineDto {
+  categoryId: string;
+  categoryName: string;
+  categoryColor: string;
+  remainingMinor: number;
+  /** The most that can be spent each remaining day and still hit the limit. */
+  allowanceMinor: number;
+  /** The limit spread evenly over the month — what the budget assumed. */
+  evenPaceMinor: number;
+  status: DailyAllowanceStatus;
+}
+
+/**
+ * A budget restated as a per-day ceiling. Carries the category name and colour
+ * so a screen can render the pacing on its own, without also fetching the
+ * budget's lines to look them up.
+ */
+export interface DailyAllowanceDto {
+  /** Days left to spend in, today included. Always >= 1. */
+  daysRemainingInclusive: number;
+  totalRemainingMinor: number;
+  totalAllowanceMinor: number;
+  lines: DailyAllowanceLineDto[];
+}
+
 export interface BudgetDto {
   id: string;
   month: string;
@@ -220,6 +247,11 @@ export interface BudgetDto {
   /** Extrapolated month-end spend from the pace so far. */
   projectedSpendMinor: number;
   daysRemaining: number;
+  /**
+   * What is left, restated as a daily ceiling per category. Null for any month
+   * that is not in progress — a finished month has no days left to pace.
+   */
+  dailyAllowance: DailyAllowanceDto | null;
   createdAt: string;
 }
 

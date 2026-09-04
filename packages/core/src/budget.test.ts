@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateBudget, median, rolloverAmountMinor, suggestBudget } from './budget';
+import { dailyAllowance, evaluateBudget, median, rolloverAmountMinor, suggestBudget } from './budget';
 
 const lines = [
   { categoryId: 'food', limitMinor: 60_000 },
@@ -175,5 +175,102 @@ describe('median', () => {
     expect(median([1, 2, 3, 4])).toBe(3); // (2+3)/2 rounded
     expect(median([10, 20, 30])).toBe(20);
     expect(median([])).toBe(0);
+  });
+});
+
+describe('dailyAllowance', () => {
+  // 30 days in September; 60,000 food / 20,000 transport / 15,000 + 5,000 fun.
+  const evaluate = (spendByCategory: Record<string, number>, asOf: string) =>
+    evaluateBudget({ month: '2026-09', lines, spendByCategory, asOf });
+
+  it('spreads what is left over the remaining days, today included', () => {
+    // Day 4 of 30 leaves 27 spendable days, this one among them.
+    const result = dailyAllowance({
+      evaluation: evaluate({ food: 29_282, transport: 2_780 }, '2026-09-04'),
+      today: '2026-09-04',
+    })!;
+
+    expect(result.daysRemainingInclusive).toBe(27);
+    const byId = Object.fromEntries(result.lines.map((l) => [l.categoryId, l]));
+    expect(byId.food!.allowanceMinor).toBe(1_137); // 30,718 / 27
+    expect(byId.transport!.allowanceMinor).toBe(637); // 17,220 / 27
+  });
+
+  it('floors, so spending the figure every day never breaches the limit', () => {
+    const result = dailyAllowance({
+      evaluation: evaluate({ transport: 0 }, '2026-09-04'),
+      today: '2026-09-04',
+    })!;
+    const transport = result.lines.find((l) => l.categoryId === 'transport')!;
+
+    expect(transport.allowanceMinor).toBe(740); // 20,000 / 27 = 740.7, not 741
+    expect(transport.allowanceMinor * result.daysRemainingInclusive).toBeLessThanOrEqual(20_000);
+  });
+
+  it('hands the whole remainder to the last day rather than dividing by zero', () => {
+    const result = dailyAllowance({
+      evaluation: evaluate({ food: 55_000 }, '2026-09-30'),
+      today: '2026-09-30',
+    })!;
+
+    expect(result.daysRemainingInclusive).toBe(1);
+    expect(result.lines.find((l) => l.categoryId === 'food')!.allowanceMinor).toBe(5_000);
+  });
+
+  it('reports an overspent line as exhausted, not as a negative allowance', () => {
+    const result = dailyAllowance({
+      evaluation: evaluate({ food: 72_000 }, '2026-09-10'),
+      today: '2026-09-10',
+    })!;
+    const food = result.lines.find((l) => l.categoryId === 'food')!;
+
+    expect(food.remainingMinor).toBe(-12_000);
+    expect(food.allowanceMinor).toBe(0);
+    expect(food.status).toBe('EXHAUSTED');
+  });
+
+  it('flags a line that must now run at under half its planned pace', () => {
+    // 2,000/day was the plan; 55,000 spent by day 10 leaves 5,000 over 21 days.
+    const result = dailyAllowance({
+      evaluation: evaluate({ food: 55_000 }, '2026-09-10'),
+      today: '2026-09-10',
+    })!;
+    const food = result.lines.find((l) => l.categoryId === 'food')!;
+
+    expect(food.evenPaceMinor).toBe(2_000);
+    expect(food.allowanceMinor).toBe(238);
+    expect(food.status).toBe('TIGHT');
+  });
+
+  it('leaves an untouched line on track at roughly its planned pace', () => {
+    const result = dailyAllowance({
+      evaluation: evaluate({}, '2026-09-10'),
+      today: '2026-09-10',
+    })!;
+    const food = result.lines.find((l) => l.categoryId === 'food')!;
+
+    expect(food.allowanceMinor).toBe(2_857); // 60,000 / 21 — ahead of the 2,000 plan
+    expect(food.status).toBe('ON_TRACK');
+  });
+
+  it('totals the remainder against the whole budget, not just the lines', () => {
+    // 10,000 of the spend sits in a category with no budget line at all.
+    const evaluation = evaluateBudget({
+      month: '2026-09',
+      lines,
+      spendByCategory: { food: 20_000, unbudgeted: 10_000 },
+      asOf: '2026-09-06',
+    });
+    const result = dailyAllowance({ evaluation, today: '2026-09-06' })!;
+
+    expect(result.totalRemainingMinor).toBe(70_000); // 100,000 limit less 30,000
+    expect(result.totalAllowanceMinor).toBe(2_800); // over 25 days
+  });
+
+  it('returns null for a month that is finished or has not started', () => {
+    const evaluation = evaluate({ food: 10_000 }, '2026-09-30');
+
+    expect(dailyAllowance({ evaluation, today: '2026-10-01' })).toBeNull();
+    expect(dailyAllowance({ evaluation, today: '2026-08-31' })).toBeNull();
   });
 });

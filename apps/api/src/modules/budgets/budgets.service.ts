@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Logger } from '@nestjs/common';
-import { addMonths, evaluateBudget, rolloverAmountMinor, suggestBudget } from '@eco/core';
+import { addMonths, dailyAllowance, evaluateBudget, rolloverAmountMinor, suggestBudget } from '@eco/core';
 import { CACHE_TTL_SECONDS, type BudgetDto, type BudgetInput, type BudgetLineDto } from '@eco/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
@@ -76,6 +76,11 @@ export class BudgetsService {
         status: line.status,
       }));
 
+      // Restate the same evaluation as a per-day ceiling. Derived from the
+      // evaluation rather than recomputed, so the pacing can never disagree
+      // with the remaining figures shown beside it.
+      const allowance = dailyAllowance({ evaluation, today: todayIso() });
+
       return {
         id: budget.id,
         month,
@@ -89,6 +94,20 @@ export class BudgetsService {
         lines,
         projectedSpendMinor: evaluation.projectedSpendMinor,
         daysRemaining: evaluation.daysRemaining,
+        dailyAllowance: allowance && {
+          daysRemainingInclusive: allowance.daysRemainingInclusive,
+          totalRemainingMinor: allowance.totalRemainingMinor,
+          totalAllowanceMinor: allowance.totalAllowanceMinor,
+          lines: allowance.lines.map((line) => ({
+            categoryId: line.categoryId,
+            categoryName: categoryById.get(line.categoryId)?.name ?? 'Unknown',
+            categoryColor: categoryById.get(line.categoryId)?.color ?? '#64748b',
+            remainingMinor: line.remainingMinor,
+            allowanceMinor: line.allowanceMinor,
+            evenPaceMinor: line.evenPaceMinor,
+            status: line.status,
+          })),
+        },
         createdAt: budget.createdAt.toISOString(),
       } satisfies BudgetDto;
     });

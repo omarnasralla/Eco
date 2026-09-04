@@ -21,6 +21,7 @@ import { useLastCategory } from '@/lib/last-category';
 import { useMoneyFormat } from '@/lib/auth-provider';
 import { formatDate } from '@/lib/utils';
 import { useChartTheme } from '@/components/charts/chart-theme';
+import { DailyAllowanceCard } from '@/components/budget/daily-allowance-card';
 import { PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -85,6 +86,10 @@ function ExpensesContent() {
           </Button>
         }
       />
+
+      {/* Pacing before the ledger: the useful question on this screen is what
+          is still spendable today, not what was spent yesterday. */}
+      <DailyAllowanceCard categoryId={categoryId} />
 
       {/* Filters sit in one row above the list, per the interaction spec. */}
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">

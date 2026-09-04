@@ -210,3 +210,91 @@ export function median(values: number[]): number {
     ? Math.round(((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2)
     : (sorted[mid] ?? 0);
 }
+
+// ─── Daily allowance ──────────────────────────────────────────────────────
+
+export type DailyAllowanceStatus = 'ON_TRACK' | 'TIGHT' | 'EXHAUSTED';
+
+export interface DailyAllowanceLine {
+  categoryId: string;
+  remainingMinor: number;
+  /** The most you can spend each remaining day and still finish on the limit. */
+  allowanceMinor: number;
+  /** The limit spread evenly over the whole month — what the plan assumed. */
+  evenPaceMinor: number;
+  status: DailyAllowanceStatus;
+}
+
+export interface DailyAllowanceResult {
+  /** Days left to spend in, today included. Always >= 1. */
+  daysRemainingInclusive: number;
+  totalRemainingMinor: number;
+  totalAllowanceMinor: number;
+  lines: DailyAllowanceLine[];
+}
+
+/**
+ * Turns "what is left" into "what can I spend today", per category.
+ *
+ * Today counts as a remaining day. Two reasons: it is still spendable, and it
+ * makes the figure self-correcting — an expense recorded at lunchtime lowers
+ * the same day's allowance instead of silently borrowing from tomorrow. On the
+ * last day of the month the divisor is 1, so the allowance is simply whatever
+ * is left; there is no day to divide across and no division by zero.
+ *
+ * Amounts are floored, never rounded: spending the displayed figure every
+ * remaining day must land on or under the limit, and rounding half a minor
+ * unit up thirty times is how a "safe" number goes over.
+ *
+ * Returns null outside a month in progress. A finished month has no days left
+ * to pace, and a future one has not started — inventing a number for either
+ * would present a plan as though it were a live constraint.
+ */
+export function dailyAllowance(params: {
+  evaluation: BudgetEvaluation;
+  /** Today, in the user's own timezone — not the server's. */
+  today: IsoDate;
+}): DailyAllowanceResult | null {
+  const { evaluation, today } = params;
+  const { y, m } = parseIsoMonth(evaluation.month);
+  const totalDays = daysInMonth(y, m);
+
+  if (today < startOfMonth(evaluation.month) || today > endOfMonth(evaluation.month)) return null;
+
+  const daysElapsed = diffDays(startOfMonth(evaluation.month), today) + 1;
+  const daysRemainingInclusive = totalDays - daysElapsed + 1;
+
+  const lines = evaluation.lines.map((line): DailyAllowanceLine => {
+    // An overspent line has no allowance to give. Reporting a negative daily
+    // figure, or quietly showing zero as though it were a budget, both read as
+    // "spend nothing" — only one of them is honest about why.
+    const remainingMinor = line.remainingMinor;
+    const allowanceMinor = Math.max(Math.floor(remainingMinor / daysRemainingInclusive), 0);
+    const evenPaceMinor = Math.floor(line.effectiveLimitMinor / totalDays);
+
+    return {
+      categoryId: line.categoryId,
+      remainingMinor,
+      allowanceMinor,
+      evenPaceMinor,
+      // "Tight" means the rest of the month has to run at under half the pace
+      // the budget was built for — the point where a category stops being on
+      // track with a nudge and needs a deliberate change of behaviour.
+      status:
+        remainingMinor <= 0
+          ? 'EXHAUSTED'
+          : evenPaceMinor > 0 && allowanceMinor * 2 < evenPaceMinor
+            ? 'TIGHT'
+            : 'ON_TRACK',
+    };
+  });
+
+  const totalRemainingMinor = evaluation.totalRemainingMinor;
+
+  return {
+    daysRemainingInclusive,
+    totalRemainingMinor,
+    totalAllowanceMinor: Math.max(Math.floor(totalRemainingMinor / daysRemainingInclusive), 0),
+    lines,
+  };
+}
