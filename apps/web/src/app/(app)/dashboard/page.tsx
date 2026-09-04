@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import {
+  ArrowLeftRight,
   CalendarClock,
   CreditCard,
   Landmark,
@@ -91,6 +92,18 @@ export default function DashboardPage() {
           invertDelta
           icon={Receipt}
           loading={summary.isLoading}
+        />
+        {/* Sits beside the two figures it is the difference of, because on its
+            own a negative number here reads as a mistake. Deliberately not
+            given a month-over-month delta: the percentage change between two
+            signed figures that can straddle zero is not a quantity anyone can
+            read — a swing from -50 to +50 is not "200% better". */}
+        <StatTile
+          label="Net cash flow"
+          valueMinor={data?.netCashFlowMinor ?? 0}
+          icon={ArrowLeftRight}
+          loading={summary.isLoading}
+          hint="Income less spending, this month"
         />
         <StatTile
           label="Total debt"
