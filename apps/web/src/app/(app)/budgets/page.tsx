@@ -12,7 +12,7 @@ import {
 } from '@eco/shared';
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
-import { useDisplayCurrency } from '@/lib/display-currency';
+import { useMoneyFormat } from '@/lib/auth-provider';
 import { formatMonth } from '@/lib/utils';
 import { useChartTheme } from '@/components/charts/chart-theme';
 import { PageHeader } from '@/components/layout/page-header';
@@ -41,8 +41,9 @@ function addMonths(month: string, delta: number): string {
 const STATUS_VARIANT = { UNDER: 'secondary', WARNING: 'warning', OVER: 'destructive' } as const;
 
 export default function BudgetsPage() {
-  const { currency, locale, format: money } = useDisplayCurrency();
+  const { currency, locale } = useMoneyFormat();
   const theme = useChartTheme();
+  const money = (minor: number) => formatMoney(minor, currency, { locale });
 
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const budget = useQuery({
@@ -397,9 +398,6 @@ function BudgetEditor({
 
           <div className="flex items-center justify-between border-t pt-3">
             <span className="text-sm font-medium">Total</span>
-            {/* Deliberately not the display currency: these limits are being
-                typed in the budget's own currency, and a total in a different
-                one would not be the sum of the numbers above it. */}
             <span className="tabular text-lg font-semibold">
               {formatMoney(totalLimitMinor, currency, { locale })}
             </span>

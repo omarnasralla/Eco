@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Sun } from 'lucide-react';
 import { formatMoney, type TodayAllowanceLineDto, type TodayStatus } from '@eco/shared';
 import { fetchers, queryKeys } from '@/lib/queries';
-import { useDisplayCurrency } from '@/lib/display-currency';
+import { useMoneyFormat } from '@/lib/auth-provider';
 import { useChartTheme } from '@/components/charts/chart-theme';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,16 +26,13 @@ const STATUS_LABEL: Record<TodayStatus, string> = { OK: 'OK', NEAR: 'Close', OVE
  * invalidates the budget query, and this reads it.
  */
 export function TodayAllowanceCard() {
-  const { currency, baseCurrency, locale } = useDisplayCurrency();
+  const { currency, locale } = useMoneyFormat();
   const theme = useChartTheme();
   const month = new Date().toISOString().slice(0, 7);
 
-  // Converted server-side, not here: the allowance is floored after dividing,
-  // and converting that floored figure would round a second time. The server
-  // converts before it divides.
   const budget = useQuery({
-    queryKey: queryKeys.budget(month, currency),
-    queryFn: () => fetchers.budget(month, currency),
+    queryKey: queryKeys.budget(month),
+    queryFn: () => fetchers.budget(month),
   });
 
   if (budget.isLoading) return <Skeleton className="mt-3 h-40 w-full" />;
@@ -130,9 +127,9 @@ export function TodayAllowanceCard() {
           </p>
         ) : null}
 
-        {today.currency === baseCurrency ? null : (
+        {today.currency === currency ? null : (
           <p className="mt-3 text-xs text-muted-foreground">
-            Converted from your {baseCurrency} budget at today&rsquo;s rate.
+            Converted from your {currency} budget at today&rsquo;s rate.
           </p>
         )}
       </CardContent>

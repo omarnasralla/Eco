@@ -9,6 +9,7 @@ import { Loader2, Plus, Search, Trash2 } from 'lucide-react';
 import {
   expenseSchema,
   type AccountDto,
+  formatMoney,
   toMajorUnits,
   type ExpenseDto,
   type ExpenseInput,
@@ -17,7 +18,7 @@ import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
 import { useEntryCurrency } from '@/lib/entry-currency';
 import { useLastCategory } from '@/lib/last-category';
-import { useDisplayCurrency } from '@/lib/display-currency';
+import { useMoneyFormat } from '@/lib/auth-provider';
 import { formatDate } from '@/lib/utils';
 import { useChartTheme } from '@/components/charts/chart-theme';
 import { DailyAllowanceCard } from '@/components/budget/daily-allowance-card';
@@ -60,7 +61,7 @@ const RECURRING_FREQUENCIES = [
 function ExpensesContent() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const { currency, locale, format: money } = useDisplayCurrency();
+  const { currency, locale } = useMoneyFormat();
   const theme = useChartTheme();
 
   const [search, setSearch] = useState('');
@@ -84,6 +85,7 @@ function ExpensesContent() {
     queryFn: () => fetchers.expenses(filters),
   });
 
+  const money = (minor: number) => formatMoney(minor, currency, { locale });
 
   return (
     <>
@@ -183,7 +185,7 @@ function ExpensesContent() {
                       // Original shown when it differs, so a converted figure is
                       // never mistaken for what was paid.
                       <p className="tabular text-xs text-muted-foreground">
-                        {money(expense.amountMinor, expense.currency)}
+                        {formatMoney(expense.amountMinor, expense.currency, { locale })}
                       </p>
                     ) : null}
                   </div>
@@ -255,7 +257,6 @@ function ExpenseDialog({
   expense?: ExpenseDto;
 }) {
   const editing = expense !== undefined;
-  const { format: money } = useDisplayCurrency();
   const [amount, setAmount] = useState('');
   const [entryCurrency, setEntryCurrency] = useEntryCurrency(baseCurrency);
   const [lastCategoryId, rememberCategory] = useLastCategory(categories.map((c) => c.id));
@@ -608,7 +609,7 @@ function ExpenseDialog({
               // by support, but not by the user, so it is worth a beat.
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm text-muted-foreground">
-                  Delete this {money(expense.amountMinor, expense.currency)}{' '}
+                  Delete this {formatMoney(expense.amountMinor, expense.currency, { locale })}{' '}
                   expense?
                 </span>
                 <Button

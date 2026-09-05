@@ -12,10 +12,10 @@ import {
   YAxis,
 } from 'recharts';
 import type { ForecastDto } from '@eco/shared';
-import { useChartMoney, useDisplayCurrency } from '@/lib/display-currency';
+import { useMoneyFormat } from '@/lib/auth-provider';
 import { shortMonth } from '@/lib/utils';
 import { axisProps, useChartTheme } from './chart-theme';
-import { ChartTooltip } from './chart-tooltip';
+import { ChartTooltip, moneyFormatter } from './chart-tooltip';
 
 /**
  * Projected cash balance with its prediction interval.
@@ -33,8 +33,8 @@ export function ForecastChart({
   height?: number;
 }) {
   const theme = useChartTheme();
-  const money = useChartMoney();
-  const { locale } = useDisplayCurrency();
+  const { currency, locale } = useMoneyFormat();
+  const money = moneyFormatter(currency, locale);
 
   const lineColor = theme.series(0);
 

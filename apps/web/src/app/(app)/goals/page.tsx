@@ -9,6 +9,7 @@ import { CheckCircle2, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import {
   GOAL_TYPES,
   GOAL_TYPE_LABELS,
+  formatMoney,
   toMajorUnits,
   goalContributionSchema,
   savingsGoalSchema,
@@ -20,7 +21,7 @@ import {
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
 import { useEntryCurrency } from '@/lib/entry-currency';
-import { useDisplayCurrency } from '@/lib/display-currency';
+import { useMoneyFormat } from '@/lib/auth-provider';
 import { formatDate } from '@/lib/utils';
 import { useChartTheme } from '@/components/charts/chart-theme';
 import { PageHeader } from '@/components/layout/page-header';
@@ -51,7 +52,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 function GoalsContent() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const { currency, locale, format: money } = useDisplayCurrency();
+  const { currency, locale } = useMoneyFormat();
   const theme = useChartTheme();
 
   const [addOpen, setAddOpen] = useState(searchParams.get('new') === '1');
@@ -100,7 +101,7 @@ function GoalsContent() {
           {goals.data!.map((goal) => {
             const colour = theme.category(goal.color);
             const inGoalCurrency = (minor: number) =>
-              money(minor, goal.currency);
+              formatMoney(minor, goal.currency, { locale });
             return (
               <Card key={goal.id}>
                 <CardContent className="p-4 sm:p-6">

@@ -11,10 +11,10 @@ import {
   YAxis,
 } from 'recharts';
 import type { TrendPointDto } from '@eco/shared';
-import { useChartMoney, useDisplayCurrency } from '@/lib/display-currency';
+import { useMoneyFormat } from '@/lib/auth-provider';
 import { shortMonth } from '@/lib/utils';
 import { axisProps, useChartTheme } from './chart-theme';
-import { ChartTooltip } from './chart-tooltip';
+import { ChartTooltip, moneyFormatter } from './chart-tooltip';
 
 /**
  * Income against expenses over time.
@@ -28,8 +28,8 @@ import { ChartTooltip } from './chart-tooltip';
  */
 export function TrendChart({ data, height = 240 }: { data: TrendPointDto[]; height?: number }) {
   const theme = useChartTheme();
-  const money = useChartMoney();
-  const { locale } = useDisplayCurrency();
+  const { currency, locale } = useMoneyFormat();
+  const money = moneyFormatter(currency, locale);
 
   const incomeColor = theme.series(0);
   const expenseColor = theme.series(1);

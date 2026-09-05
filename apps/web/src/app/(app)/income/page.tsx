@@ -11,6 +11,7 @@ import {
   INCOME_TYPES,
   INCOME_TYPE_LABELS,
   convertMinor,
+  formatMoney,
   incomeSourceSchema,
   parseAmountInput,
   toMajorUnits,
@@ -22,7 +23,7 @@ import {
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
 import { useEntryCurrency } from '@/lib/entry-currency';
-import { useDisplayCurrency } from '@/lib/display-currency';
+import { useMoneyFormat } from '@/lib/auth-provider';
 import { formatDate } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -77,7 +78,8 @@ function runRateState(source: IncomeSourceDto): { counted: boolean; label?: stri
 function IncomeContent() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const { currency, locale, format: money } = useDisplayCurrency();
+  const { currency, locale } = useMoneyFormat();
+  const money = (minor: number) => formatMoney(minor, currency, { locale });
 
   const [addOpen, setAddOpen] = useState(searchParams.get('new') === '1');
   const [editing, setEditing] = useState<IncomeSourceDto | null>(null);
@@ -213,7 +215,7 @@ function IncomeContent() {
                         {/* Shown in the source's own currency: a riyal salary
                             under a dollar sign is a different, wrong number. */}
                         <p className="tabular text-sm font-semibold">
-                          {money(source.amountMinor, source.currency)}
+                          {formatMoney(source.amountMinor, source.currency, { locale })}
                         </p>
                         {(() => {
                           // The monthly line earns its place when the frequency
@@ -229,7 +231,9 @@ function IncomeContent() {
                           if (base === null) {
                             return (
                               <p className="tabular text-xs text-muted-foreground">
-                                {money(source.monthlyEquivalentMinor, source.currency)}
+                                {formatMoney(source.monthlyEquivalentMinor, source.currency, {
+                                  locale,
+                                })}
                                 /mo
                               </p>
                             );
@@ -300,7 +304,7 @@ function IncomeContent() {
                     </p>
                   </div>
                   <p className="tabular shrink-0 text-sm font-semibold">
-                    {money(receipt.amountMinor, receipt.currency)}
+                    {formatMoney(receipt.amountMinor, receipt.currency, { locale })}
                   </p>
                   <Button
                     size="sm"

@@ -177,3 +177,10 @@ export function useAuth(): AuthContextValue {
  * has loaded. Every money formatter in the UI reads from here rather than
  * hardcoding a currency.
  */
+export function useMoneyFormat(): { currency: string; locale: string } {
+  const { user } = useAuth();
+  return {
+    currency: user?.currency ?? 'USD',
+    locale: user?.locale ?? 'en-US',
+  };
+}
