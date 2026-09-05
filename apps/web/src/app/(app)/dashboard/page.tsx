@@ -78,13 +78,20 @@ export default function DashboardPage() {
       />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {/* Received, not forecast. What is still owed is named in the hint
+            rather than folded into the figure, so the headline is always money
+            that exists. */}
         <StatTile
           label="Income"
           valueMinor={data?.totalIncomeMinor ?? 0}
           deltaPct={data?.deltas.incomePct}
           icon={TrendingUp}
           loading={summary.isLoading}
-          hint="Received or due this month"
+          hint={
+            data && data.expectedIncomeMinor > 0
+              ? `${money(data.expectedIncomeMinor)} still expected`
+              : 'Received this month'
+          }
         />
         <StatTile
           label="Spent this month"
@@ -104,7 +111,11 @@ export default function DashboardPage() {
           valueMinor={data?.netCashFlowMinor ?? 0}
           icon={ArrowLeftRight}
           loading={summary.isLoading}
-          hint="Income less spending, this month"
+          hint={
+            data && data.expectedIncomeMinor > 0
+              ? 'Received less spending — pay not in yet'
+              : 'Income less spending, this month'
+          }
         />
         <StatTile
           label="Total debt"

@@ -320,14 +320,22 @@ export interface DashboardSummaryDto {
   currency: string;
   period: { from: string; to: string };
   /**
-   * What this month earned — payments actually received, plus anything still
-   * expected from a recurring source that has not been receipted yet.
+   * What this month has actually been paid — receipts only. Anything still
+   * owed by a recurring source is reported separately as
+   * `expectedIncomeMinor`.
    *
    * Not a run rate. A one-off payment, a bonus or an irregular invoice counts
    * in the month it lands, so someone paid irregularly is no longer reported
    * as earning nothing.
    */
   totalIncomeMinor: number;
+  /**
+   * Income still expected this month and not yet receipted. Reported beside
+   * `totalIncomeMinor` rather than inside it: one is money that has arrived,
+   * the other is a forecast, and a headline that adds them claims the user
+   * holds what they have only been promised.
+   */
+  expectedIncomeMinor: number;
   totalExpensesMinor: number;
   netCashFlowMinor: number;
   /**

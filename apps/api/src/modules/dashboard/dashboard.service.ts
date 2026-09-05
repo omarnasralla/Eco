@@ -65,7 +65,7 @@ export class DashboardService {
         // a bonus or an irregular invoice is income, and reporting zero for a
         // month that paid the rent is simply wrong. Both months come back in
         // one pass so the month-over-month delta costs no extra queries.
-        this.income.incomeByMonth(userId, userCurrency, [previousMonth, targetMonth]),
+        this.income.incomeBreakdownByMonth(userId, userCurrency, [previousMonth, targetMonth]),
         this.totalDebt(userId, userCurrency),
         this.goals.totalSaved(userId, userCurrency),
         this.accounts.totalBalance(userId, userCurrency),
@@ -73,8 +73,13 @@ export class DashboardService {
         this.upcomingBills(userId, 14),
       ]);
 
-      const incomeThis = incomeByMonth.get(targetMonth) ?? 0;
-      const incomePrev = incomeByMonth.get(previousMonth) ?? 0;
+      // Received only. Salary that has not landed yet is money the user does
+      // not have, and netting it against spending that has already happened
+      // reports a balance nobody holds — the headline read +$3,114 on an
+      // account whose entire receipt history was $2,071.
+      const incomeThis = incomeByMonth.get(targetMonth)?.received ?? 0;
+      const incomePrev = incomeByMonth.get(previousMonth)?.received ?? 0;
+      const expectedIncomeMinor = incomeByMonth.get(targetMonth)?.expected ?? 0;
       const netCashFlowMinor = incomeThis - expensesThis;
 
       // The savings rate is a trailing average over complete months, never the
@@ -121,6 +126,7 @@ export class DashboardService {
         currency: userCurrency,
         period: { from: `${targetMonth}-01`, to: this.endOfMonth(targetMonth) },
         totalIncomeMinor: incomeThis,
+        expectedIncomeMinor,
         totalExpensesMinor: expensesThis,
         netCashFlowMinor,
         savingsRatePct: savingsRatePctValue,

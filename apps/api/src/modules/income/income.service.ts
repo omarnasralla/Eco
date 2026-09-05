@@ -305,12 +305,22 @@ export class IncomeService {
    * because a soft delete records no date. Receipts are unaffected, which is
    * the other reason recording them is worth it.
    */
-  async incomeByMonth(
+  /**
+   * Received and still-expected income, kept apart.
+   *
+   * They answer different questions and must not be added together by
+   * accident: one is money in an account, the other is a forecast. A headline
+   * that nets a prediction against real spending states a number the user does
+   * not have.
+   */
+  async incomeBreakdownByMonth(
     userId: string,
     userCurrency: string,
     months: string[],
-  ): Promise<Map<string, number>> {
-    const totals = new Map<string, number>(months.map((m) => [m, 0]));
+  ): Promise<Map<string, { received: number; expected: number }>> {
+    const totals = new Map<string, { received: number; expected: number }>(
+      months.map((m) => [m, { received: 0, expected: 0 }]),
+    );
     if (months.length === 0) return totals;
 
     const sorted = [...months].sort();
@@ -337,14 +347,11 @@ export class IncomeService {
         seen.add(receipt.incomeSourceId);
         receiptedByMonth.set(month, seen);
       }
-      totals.set(
-        month,
-        totals.get(month)! +
-          (await this.currency.convertForDisplay(
-            toNumber(receipt.amountMinor),
-            receipt.currency,
-            userCurrency,
-          )),
+      const bucket = totals.get(month)!;
+      bucket.received += await this.currency.convertForDisplay(
+        toNumber(receipt.amountMinor),
+        receipt.currency,
+        userCurrency,
       );
     }
 
@@ -363,15 +370,29 @@ export class IncomeService {
           month,
         );
         if (expected === 0) continue;
-        totals.set(
-          month,
-          totals.get(month)! +
-            (await this.currency.convertForDisplay(expected, source.currency, userCurrency)),
+        totals.get(month)!.expected += await this.currency.convertForDisplay(
+          expected,
+          source.currency,
+          userCurrency,
         );
       }
     }
 
     return totals;
+  }
+
+  /**
+   * Received plus expected, as a single figure. Correct for a complete month,
+   * where nothing is still outstanding; misleading as a headline for the month
+   * in progress, which is why the dashboard asks for the breakdown instead.
+   */
+  async incomeByMonth(
+    userId: string,
+    userCurrency: string,
+    months: string[],
+  ): Promise<Map<string, number>> {
+    const breakdown = await this.incomeBreakdownByMonth(userId, userCurrency, months);
+    return new Map([...breakdown].map(([month, v]) => [month, v.received + v.expected]));
   }
 
   /** What a single month earned. */
