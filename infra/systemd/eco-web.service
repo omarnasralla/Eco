@@ -1,0 +1,33 @@
+[Unit]
+Description=Eco web (Next.js standalone)
+Documentation=file:///root/Eco/docs/05-deployment.md
+# The web server renders server-side through the API, but it does not need the
+# API to be listening before it starts — it retries per request. After, so the
+# ordering is sensible on boot; no Requires, so a failed API does not stop web.
+After=network-online.target eco-api.service
+Wants=network-online.target
+
+# A crash loop against a dependency that is still starting should back off
+# rather than spin: five failures inside a minute and systemd waits.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+# Next's standalone output runs from its own directory, beside the static/ and
+# public/ directories that scripts/redeploy.sh copies in next to server.js.
+WorkingDirectory=/root/Eco/apps/web/.next/standalone/apps/web
+Environment=PORT=3000
+# Loopback only. Caddy is the edge and reaches this through a socat relay on
+# the Docker bridge; binding 0.0.0.0 would publish it to the internet directly,
+# and ufw is inactive on this machine.
+Environment=HOSTNAME=127.0.0.1
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/eco/web.log
+StandardError=append:/var/log/eco/web.log
+SyslogIdentifier=eco-web
+
+[Install]
+WantedBy=multi-user.target

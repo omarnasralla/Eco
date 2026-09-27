@@ -1,0 +1,32 @@
+[Unit]
+Description=Eco API (NestJS)
+Documentation=file:///root/Eco/docs/05-deployment.md
+# Postgres and Redis are containers, so Docker has to be up first. Wants, not
+# Requires: if Docker is restarted this service should keep trying rather than
+# be stopped along with it — Restart=always below reconnects on its own.
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+# A crash loop against a dependency that is still starting should back off
+# rather than spin: five failures inside a minute and systemd waits.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+# Not cosmetic. The API reads its configuration from ./.env — which is a
+# symlink to /root/Eco/.env — resolved against this directory. Start it
+# anywhere else and it boots with no DATABASE_URL and refuses to run.
+WorkingDirectory=/root/Eco/apps/api
+ExecStart=/usr/bin/node dist/main.js
+# The reason this unit exists: an unattended kernel upgrade rebooted the
+# machine on 2026-09-22 and the API, started by hand from a shell, did not come
+# back. The containers did, so Caddy answered and returned 502 for a day.
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/eco/api.log
+StandardError=append:/var/log/eco/api.log
+SyslogIdentifier=eco-api
+
+[Install]
+WantedBy=multi-user.target

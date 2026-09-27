@@ -2,21 +2,34 @@
 #
 # Rebuild and restart the API and web server on the VM.
 #
-# Written after a hand-rolled restart took the app down. Two hazards it exists
-# to remove:
+# Both run as systemd units — eco-api and eco-web — so this script builds and
+# then hands the restart to systemctl. It does not start or stop processes
+# itself, and that is the point of two separate repairs:
 #
-#   1. `kill $(pgrep -f "node dist/main.js")` also matches the shell running
-#      that very command, so the pipeline kills itself part-way through. It did
-#      exactly that between an `rm -rf .next/static` and the `cp` meant to
-#      replace it, leaving every JavaScript chunk a 404 and the app a blank
-#      page. Here the shell's own process tree is excluded from the match.
+#   1. This script used to kill by pattern, and `pgrep -f "node dist/main.js"`
+#      matches the shell running that very command, so the pipeline killed
+#      itself part-way through. It did exactly that between an
+#      `rm -rf .next/static` and the `cp` meant to replace it, leaving every
+#      JavaScript chunk a 404 and the app a blank page. systemd kills by cgroup
+#      and cannot make that mistake.
 #
-#   2. Next's standalone output does not include `static/` or `public/`; they
+#   2. Processes started from a shell do not survive a reboot. An unattended
+#      kernel upgrade restarted this machine on 2026-09-22; the containers came
+#      back on their own restart policies, so Caddy answered and returned 502
+#      for a day while nothing listened on 3000 or 9000. The units are enabled,
+#      so both now start at boot and restart on crash.
+#
+# The one hazard left for this script to handle is its own:
+#
+#   3. Next's standalone output does not include `static/` or `public/`; they
 #      have to be copied in beside it. Removing the old copy before writing the
 #      new one leaves a window with no assets at all, so the new directory is
 #      staged alongside and swapped in with a rename.
 #
 # Usage: scripts/redeploy.sh [api|web|all]   (default: all)
+#
+# Logs are where they always were — $ECO_LOG_DIR, default /var/log/eco — because
+# the units append there rather than writing to the journal.
 
 set -euo pipefail
 
@@ -26,38 +39,6 @@ LOG_DIR="${ECO_LOG_DIR:-/var/log/eco}"
 TARGET="${1:-all}"
 
 mkdir -p "$LOG_DIR"
-
-# Kill by pattern without matching this script or its own subshells.
-stop() {
-  local pattern="$1" name="$2" pids=()
-  while read -r pid; do
-    [[ -z "$pid" || "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
-    pids+=("$pid")
-  done < <(pgrep -f "$pattern" | grep -v -x "$$" || true)
-
-  if [[ ${#pids[@]} -eq 0 ]]; then
-    echo "  $name: not running"
-    return
-  fi
-  kill "${pids[@]}" 2>/dev/null || true
-  for _ in {1..20}; do
-    kill -0 "${pids[@]}" 2>/dev/null || break
-    sleep 0.5
-  done
-  kill -9 "${pids[@]}" 2>/dev/null || true
-  echo "  $name: stopped (${pids[*]})"
-}
-
-# Start a server fully detached.
-#
-# `setsid --fork` matters: plain `setsid` forks and *waits* when it is already
-# a process group leader, leaving a shell that holds this script's stdout open
-# — so the script never appears to finish. All three descriptors are redirected
-# so nothing inherits the terminal either.
-start() {
-  local dir="$1" cmd="$2" log="$3"
-  ( cd "$dir" && setsid --fork $cmd >"$log" 2>&1 </dev/null )
-}
 
 wait_for() {
   local url="$1" name="$2"
@@ -75,8 +56,7 @@ wait_for() {
 if [[ "$TARGET" == "api" || "$TARGET" == "all" ]]; then
   echo "Building API…"
   npm run build --workspace @eco/api --prefix "$ROOT"
-  stop "node dist/main.js" api
-  start "$ROOT/apps/api" "node dist/main.js" "$LOG_DIR/api.log"
+  systemctl restart eco-api
   wait_for "http://127.0.0.1:9000/eco/api/v1/health/live" api
 fi
 
@@ -93,8 +73,8 @@ if [[ "$TARGET" == "web" || "$TARGET" == "all" ]]; then
   rm -rf "$STANDALONE/.next/static.old"
   cp -r "$ROOT/apps/web/public" "$STANDALONE/" 2>/dev/null || true
 
-  stop "next-server" web
-  PORT=3000 HOSTNAME=127.0.0.1 start "$STANDALONE" "node server.js" "$LOG_DIR/web.log"
+  # PORT and HOSTNAME live in the unit, not here.
+  systemctl restart eco-web
   wait_for "http://127.0.0.1:3000/eco/app/login" web
 fi
 

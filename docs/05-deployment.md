@@ -151,6 +151,51 @@ runs against the new schema: expand, deploy, contract in the following release.
 - `OTEL_EXPORTER_OTLP_ENDPOINT` and `SENTRY_DSN` are wired in configuration and
   are the intended phase-2 additions.
 
+## The VM this actually runs on
+
+The Kubernetes manifests above describe the intended production shape. The
+machine serving the app today is a single VM, arranged like this:
+
+| Piece | How it runs |
+|---|---|
+| Postgres, Redis, Ollama | Containers, `restart: unless-stopped` |
+| API (`:9000`) and web (`:3000`) | systemd units `eco-api`, `eco-web`, loopback only |
+| Edge (`:80`, `:443`) | A shared Caddy container, `ospos-gateway-caddy-1` |
+
+Caddy is not this project's — it is the machine's edge, terminating TLS for
+several applications, and its Eco route lives in that gateway's
+`extra/eco.caddy`. It reaches these two loopback services through socat relays
+on the Docker bridge, because a container cannot dial the host's `127.0.0.1`
+and widening the bind would publish an internal API to the internet.
+
+Deploy with [`scripts/redeploy.sh`](../scripts/redeploy.sh) `[api|web|all]`. It
+builds, then `systemctl restart`s the unit and waits on the health endpoint;
+for web it also stages Next's `static/` and `public/` beside the standalone
+output and swaps them in with a rename, so there is no window where the app
+serves HTML with no assets. Logs stay in `/var/log/eco/{api,web}.log` — the
+units append there rather than writing to the journal.
+
+Both units are **enabled**, so they start at boot and restart on crash. That is
+not a precaution; it is a repair. Both services used to be started by hand from
+a shell, and when an unattended kernel upgrade rebooted the machine on
+2026-09-22 they did not come back. The containers did, so Caddy kept answering
+and returned 502 for a day.
+
+A 502 from the edge means the upstream is not listening. In order:
+
+```bash
+systemctl status eco-api eco-web        # units up?
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:9000/eco/api/v1/health/live
+docker exec ospos-gateway-caddy-1 wget -qO- http://127.0.0.1:2019/config/ | head -c 200
+```
+
+That last one has been empty once: the gateway's site files are bind-mounted,
+the directories were replaced on the host, and the container kept pointing at
+the old empty ones — so a reload adapted to `{}` and every site on the machine
+went dark. `caddy validate` passes on an empty config, so neither the reload
+guard nor the healthcheck caught it. Restarting the container re-mounts the
+real directories.
+
 ## Backups
 
 [`scripts/backup-db.sh`](../scripts/backup-db.sh) dumps `eco` out of the
