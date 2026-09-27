@@ -25,6 +25,7 @@ function toDto(expense: ExpenseRow): ExpenseDto {
     notes: expense.notes,
     isRecurring: expense.isRecurring,
     excludedFromBudget: expense.excludedFromBudget,
+    needsReview: expense.needsReview,
     recurringFrequency: expense.recurringFrequency,
     tags: expense.tags,
     createdAt: expense.createdAt.toISOString(),
@@ -82,6 +83,7 @@ export class ExpensesService {
           }
         : {}),
       ...(query.merchant ? { merchant: { contains: query.merchant, mode: 'insensitive' } } : {}),
+      ...(query.needsReview !== undefined ? { needsReview: query.needsReview } : {}),
       ...(query.minAmountMinor != null || query.maxAmountMinor != null
         ? {
             baseAmountMinor: {
@@ -284,6 +286,12 @@ export class ExpensesService {
           ? { recurringFrequency: input.recurringFrequency }
           : {}),
         ...(input.tags !== undefined ? { tags: input.tags } : {}),
+        // Editing a captured row is the confirmation. The flag asks "did the
+        // guess land in the right place?", and a person who has just opened
+        // the row and saved it has answered — whether they changed the
+        // category or decided it was already right. Leaving it set would ask
+        // the same question again forever.
+        ...(existing.needsReview ? { needsReview: false } : {}),
       },
       include: { category: { select: { id: true, name: true, icon: true, color: true } } },
     });
@@ -295,7 +303,13 @@ export class ExpensesService {
   async remove(userId: string, id: string): Promise<void> {
     const { count } = await this.prisma.expense.updateMany({
       where: { id, userId, deletedAt: null },
-      data: { deletedAt: new Date() },
+      // Clearing externalRef matters: the unique index that makes a retried
+      // capture idempotent does not exclude soft-deleted rows, so a deleted
+      // row went on owning its reference forever. A later tap carrying that
+      // reference collided with a row the user could no longer see, and was
+      // answered with "already recorded" — the expense silently never existed.
+      // A deleted capture releases its reference.
+      data: { deletedAt: new Date(), externalRef: null },
     });
     if (count === 0) throw new NotFoundException('Expense not found');
     await this.redis.invalidateUser(userId);

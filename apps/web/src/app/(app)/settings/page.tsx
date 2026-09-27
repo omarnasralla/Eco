@@ -3,14 +3,16 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
-import { Download, Loader2, LogOut, Moon, ShieldCheck, Sun } from 'lucide-react';
-import { CURRENCIES } from '@eco/shared';
+import { Copy, Download, Loader2, LogOut, Moon, ShieldCheck, Smartphone, Sun, Trash2 } from 'lucide-react';
+import { CURRENCIES, type CreatedIngestTokenDto, type IngestTokenDto } from '@eco/shared';
 import { api } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-provider';
 import { PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import {
   Select,
@@ -145,6 +147,8 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
+        <AutomaticExpensesCard />
+
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Your data</CardTitle>
@@ -249,3 +253,152 @@ export default function SettingsPage() {
   );
 }
 
+/**
+ * Capture tokens for the iOS shortcut that posts an Apple Pay tap.
+ *
+ * The token is shown exactly once, at creation, because only its hash is
+ * stored. That is worth the friction: this credential lives in a shortcut on a
+ * phone, and a database read should not be able to spend as the user.
+ */
+function AutomaticExpensesCard() {
+  const [label, setLabel] = useState('');
+  const [minted, setMinted] = useState<CreatedIngestTokenDto | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const tokens = useQuery({
+    queryKey: ['ingest', 'tokens'],
+    queryFn: () => api.get<IngestTokenDto[]>('/ingest/tokens'),
+  });
+
+  const create = useMutation({
+    mutationFn: (name: string) =>
+      api.post<CreatedIngestTokenDto>('/ingest/tokens', { label: name }),
+    onSuccess: (data) => {
+      setMinted(data);
+      setLabel('');
+      setCopied(false);
+      void tokens.refetch();
+    },
+    onError: () => setError('Could not create a token. Please try again.'),
+  });
+
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.delete(`/ingest/tokens/${id}`),
+    onSuccess: () => {
+      setMinted(null);
+      void tokens.refetch();
+    },
+    onError: () => setError('Could not revoke that token.'),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Smartphone className="size-4 text-primary" aria-hidden />
+          Automatic expenses
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Record an Apple Pay tap the moment it happens. Create a token below, then build the
+          iPhone shortcut described in the user guide — it posts each tap here, and the expense
+          appears without you typing anything.
+        </p>
+
+        {minted ? (
+          <div className="space-y-2 rounded-md border bg-muted/40 p-3">
+            <p className="text-sm font-medium">Copy this now — it is not shown again.</p>
+            <code className="block break-all rounded bg-background px-2 py-1.5 font-mono text-xs">
+              {minted.token}
+            </code>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(minted.token);
+                  setCopied(true);
+                } catch {
+                  // Clipboard access is refused outside a secure context and in
+                  // some in-app browsers. The token is on screen either way.
+                  setError('Could not copy automatically — select the token and copy it.');
+                }
+              }}
+            >
+              <Copy className="size-4" aria-hidden />
+              {copied ? 'Copied' : 'Copy token'}
+            </Button>
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-0 flex-1 space-y-2">
+            <Label htmlFor="token-label">Name this phone</Label>
+            <Input
+              id="token-label"
+              placeholder="My iPhone"
+              value={label}
+              onChange={(event) => setLabel(event.target.value)}
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setError(null);
+              create.mutate(label.trim() || 'My iPhone');
+            }}
+            disabled={create.isPending}
+          >
+            {create.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+            Create token
+          </Button>
+        </div>
+
+        {(tokens.data ?? []).length > 0 ? (
+          <>
+            <Separator />
+            <ul className="space-y-2">
+              {(tokens.data ?? []).map((token) => (
+                <li key={token.id} className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{token.label}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {token.lastUsedAt
+                        ? `last used ${new Date(token.lastUsedAt).toLocaleString()}`
+                        : 'never used'}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Revoke ${token.label}`}
+                    onClick={() => revoke.mutate(token.id)}
+                    disabled={revoke.isPending}
+                  >
+                    <Trash2 className="size-4" aria-hidden />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+
+        <p className="text-xs text-muted-foreground">
+          A token can only add expenses — it cannot read your balances, move money, or sign in.
+          Revoke one if you lose the phone holding it.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}

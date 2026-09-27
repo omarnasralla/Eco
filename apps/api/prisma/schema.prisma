@@ -184,12 +184,12 @@ enum ChatRole {
 // ─── Identity ─────────────────────────────────────────────────────────────
 
 model User {
-  id       String   @id @default(uuid()) @db.Uuid
-  email    String   @unique @db.Citext
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.Citext
   /// Argon2id hash. Null for accounts created purely through OAuth.
   passwordHash String?
-  name     String   @db.VarChar(120)
-  role     UserRole @default(USER)
+  name         String   @db.VarChar(120)
+  role         UserRole @default(USER)
 
   country  String? @db.Char(2)
   /// The user's base currency. Every cross-currency figure is normalised here.
@@ -201,8 +201,8 @@ model User {
   emailVerifiedAt DateTime?
 
   /// TOTP secret, encrypted at the application layer with AES-256-GCM.
-  twoFactorSecret     String?
-  twoFactorEnabled    Boolean @default(false)
+  twoFactorSecret        String?
+  twoFactorEnabled       Boolean  @default(false)
   /// Argon2 hashes of single-use recovery codes.
   twoFactorRecoveryCodes String[] @default([])
 
@@ -223,25 +223,26 @@ model User {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  incomeSources   IncomeSource[]
-  categories      Category[]
-  expenses        Expense[]
-  debts           Debt[]
-  savingsGoals    SavingsGoal[]
-  budgets         Budget[]
-  accounts        FinancialAccount[]
-  notifications   Notification[]
+  incomeSources          IncomeSource[]
+  categories             Category[]
+  expenses               Expense[]
+  debts                  Debt[]
+  savingsGoals           SavingsGoal[]
+  budgets                Budget[]
+  accounts               FinancialAccount[]
+  notifications          Notification[]
   notificationPreference NotificationPreference?
-  pushTokens      PushToken[]
-  refreshTokens   RefreshToken[]
-  verificationTokens VerificationToken[]
-  oauthAccounts   OAuthAccount[]
-  auditLogs       AuditLog[]
-  reports         Report[]
-  recommendations Recommendation[]
-  conversations   AiConversation[]
-  forecasts       ForecastSnapshot[]
-  spendingPatterns SpendingPattern[]
+  pushTokens             PushToken[]
+  ingestTokens           IngestToken[]
+  refreshTokens          RefreshToken[]
+  verificationTokens     VerificationToken[]
+  oauthAccounts          OAuthAccount[]
+  auditLogs              AuditLog[]
+  reports                Report[]
+  recommendations        Recommendation[]
+  conversations          AiConversation[]
+  forecasts              ForecastSnapshot[]
+  spendingPatterns       SpendingPattern[]
 
   @@index([deletedAt])
   @@map("users")
@@ -267,6 +268,40 @@ model OAuthAccount {
 
 /// One row per issued refresh token, so a stolen token can be revoked
 /// individually and every active session is listable in the UI.
+/**
+ * A long-lived credential for unattended capture: the iOS Shortcut that posts
+ * an Apple Pay tap the moment it happens.
+ * Deliberately not a session. It can append an expense and nothing else — it
+ * cannot read a balance, move money, or authenticate a login — because it
+ * lives in a shortcut on a phone, which is a far softer place than a keychain.
+ * The token embeds its owner's id (`eco_<user>_<secret>`) so the row can be
+ * found by tenant rather than by scanning every secret in the table, which is
+ * also what lets the lookup work under row-level security: the tenant is known
+ * before the query, not after it.
+ */
+model IngestToken {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+
+  /// SHA-256 of the token. The token itself is shown once, at creation, and is
+  /// never stored — so a database read cannot post expenses as the user.
+  tokenHash String @unique @db.Char(64)
+  /// What the user called it, so one phone can be revoked without the others.
+  label     String @db.VarChar(80)
+
+  /// Last time it was used, so a token that has gone quiet can be recognised.
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  /// Revoked rather than deleted: the audit trail should still explain rows it
+  /// created.
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("ingest_tokens")
+}
+
 model RefreshToken {
   id        String    @id @default(uuid()) @db.Uuid
   userId    String    @db.Uuid
@@ -291,13 +326,13 @@ model RefreshToken {
 
 /// Single-use tokens for email verification, password reset and 2FA challenges.
 model VerificationToken {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @db.Uuid
-  tokenHash String   @unique
-  purpose   String   @db.VarChar(40)
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  purpose   String    @db.VarChar(40)
   expiresAt DateTime
   usedAt    DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -311,27 +346,27 @@ model VerificationToken {
 /// A cash or asset account. Manual today; the same table receives balances
 /// from Open Banking aggregators in Phase 4 (`externalId` / `providerId`).
 model FinancialAccount {
-  id             String   @id @default(uuid()) @db.Uuid
-  userId         String   @db.Uuid
-  name           String   @db.VarChar(120)
+  id                  String    @id @default(uuid()) @db.Uuid
+  userId              String    @db.Uuid
+  name                String    @db.VarChar(120)
   /// CHECKING | SAVINGS | CASH | INVESTMENT | OTHER
-  kind           String   @db.VarChar(24)
-  currency       String   @db.Char(3)
+  kind                String    @db.VarChar(24)
+  currency            String    @db.Char(3)
   /// The balance as at `openingBalanceDate`. The live balance is this plus
   /// every assigned transaction since, computed on read rather than stored, so
   /// an edited or deleted transaction cannot leave the figure drifted.
-  openingBalanceMinor BigInt @default(0)
-  openingBalanceDate  DateTime @default(now()) @db.Date
-  isPrimary      Boolean  @default(false)
+  openingBalanceMinor BigInt    @default(0)
+  openingBalanceDate  DateTime  @default(now()) @db.Date
+  isPrimary           Boolean   @default(false)
   /// Reserved for bank aggregation; null while the account is manual.
-  providerId     String?  @db.VarChar(60)
-  externalId     String?  @db.VarChar(120)
-  lastSyncedAt   DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  deletedAt      DateTime?
+  providerId          String?   @db.VarChar(60)
+  externalId          String?   @db.VarChar(120)
+  lastSyncedAt        DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  deletedAt           DateTime?
 
-  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   expenses      Expense[]
   incomeSources IncomeSource[]
   receipts      IncomeReceipt[]
@@ -339,8 +374,8 @@ model FinancialAccount {
   debts         Debt[]
   debtPayments  DebtPayment[]
 
-  @@index([userId, deletedAt])
   @@unique([providerId, externalId])
+  @@index([userId, deletedAt])
   @@map("financial_accounts")
 }
 
@@ -396,20 +431,20 @@ model IncomeSource {
 /// An actual payment landing, as opposed to the schedule it was expected on.
 /// Keeping the two apart is what lets us tell "paid late" from "not paid".
 model IncomeReceipt {
-  id             String   @id @default(uuid()) @db.Uuid
-  userId         String   @db.Uuid
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @db.Uuid
   /// Null for a one-off payment that has no recurring schedule behind it.
-  incomeSourceId String?  @db.Uuid
-  accountId      String?  @db.Uuid
+  incomeSourceId  String?  @db.Uuid
+  accountId       String?  @db.Uuid
   /// Set for a standalone receipt; otherwise copied from the source.
-  name           String?  @db.VarChar(120)
-  amountMinor    BigInt
-  currency       String   @db.Char(3)
+  name            String?  @db.VarChar(120)
+  amountMinor     BigInt
+  currency        String   @db.Char(3)
   /// Amount converted to the user's base currency at the receipt-date rate.
   baseAmountMinor BigInt
-  date           DateTime @db.Date
-  notes          String?  @db.Text
-  createdAt      DateTime @default(now())
+  date            DateTime @db.Date
+  notes           String?  @db.Text
+  createdAt       DateTime @default(now())
 
   incomeSource IncomeSource?     @relation(fields: [incomeSourceId], references: [id], onDelete: Cascade)
   account      FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
@@ -435,8 +470,8 @@ model Category {
   parentId String? @db.Uuid
 
   /// True for seeded categories; they cannot be deleted, only archived.
-  isSystem   Boolean @default(false)
-  isArchived Boolean @default(false)
+  isSystem    Boolean @default(false)
+  isArchived  Boolean @default(false)
   /// Whether spend here counts toward the emergency-fund calculation.
   isEssential Boolean @default(false)
 
@@ -447,10 +482,10 @@ model Category {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  parent   Category?    @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
-  children Category[]   @relation("CategoryTree")
-  expenses Expense[]
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent      Category?    @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Category[]   @relation("CategoryTree")
+  expenses    Expense[]
   budgetLines BudgetLine[]
 
   @@unique([userId, name])
@@ -460,19 +495,19 @@ model Category {
 }
 
 model Expense {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @db.Uuid
-  categoryId  String   @db.Uuid
-  accountId   String?  @db.Uuid
-  amountMinor BigInt
-  currency    String   @db.Char(3)
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @db.Uuid
+  categoryId      String   @db.Uuid
+  accountId       String?  @db.Uuid
+  amountMinor     BigInt
+  currency        String   @db.Char(3)
   /// Amount in the user's base currency, frozen at the transaction-date rate.
   /// Denormalised deliberately: every dashboard aggregate sums this column, and
   /// re-converting millions of rows per request is not viable.
   baseAmountMinor BigInt
-  date        DateTime @db.Date
-  merchant    String?  @db.VarChar(160)
-  notes       String?  @db.Text
+  date            DateTime @db.Date
+  merchant        String?  @db.VarChar(160)
+  notes           String?  @db.Text
 
   /// Spent, but outside what any budget was meant to cover — a reimbursable
   /// cost, a one-off, a savings transfer that turned out to be spending. Still
@@ -488,6 +523,16 @@ model Expense {
 
   tags String[] @default([])
 
+  /// Captured automatically — an Apple Pay tap posted by the iOS Shortcut —
+  /// and filed under a category nobody chose. The row counts everywhere a
+  /// typed one does; this only marks it for a human to confirm the guess.
+  needsReview Boolean @default(false)
+
+  /// Idempotency key from whatever captured the row. A phone on a flaky
+  /// connection retries, and a retried tap must not become a second expense.
+  /// Null for anything entered by hand.
+  externalRef String? @db.VarChar(120)
+
   /// Reserved for OCR receipt capture (Phase 4).
   receiptUrl String? @db.VarChar(500)
 
@@ -495,11 +540,14 @@ model Expense {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   /// Removing an account must not delete the spending that went through it.
   account  FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
+  /// Idempotency. Postgres treats NULLs as distinct, so hand-entered rows —
+  /// which all have a null ref — do not collide with each other.
+  @@unique([userId, externalRef])
   // The workhorse index: every list, chart and report filters by user and date.
   @@index([userId, date(sort: Desc), deletedAt])
   @@index([userId, categoryId, date])
@@ -510,34 +558,36 @@ model Expense {
   /// Merchant suggestions, looked up per category.
   @@index([userId, categoryId, merchant])
   @@index([recurringGroupId])
+  /// Rows waiting on a human, newest first.
+  @@index([userId, needsReview, date(sort: Desc)])
   @@map("expenses")
 }
 
 // ─── Debts ────────────────────────────────────────────────────────────────
 
 model Debt {
-  id                  String   @id @default(uuid()) @db.Uuid
-  userId              String   @db.Uuid
-  name                String   @db.VarChar(120)
+  id                  String    @id @default(uuid()) @db.Uuid
+  userId              String    @db.Uuid
+  name                String    @db.VarChar(120)
   type                DebtType
-  lender              String?  @db.VarChar(160)
+  lender              String?   @db.VarChar(160)
   principalMinor      BigInt
   currentBalanceMinor BigInt
   /// Nominal APR as a percentage, e.g. 21.99.
-  interestRateApr     Decimal  @db.Decimal(6, 3)
+  interestRateApr     Decimal   @db.Decimal(6, 3)
   minimumPaymentMinor BigInt
-  currency            String   @db.Char(3)
-  dueDayOfMonth       Int      @db.SmallInt
+  currency            String    @db.Char(3)
+  dueDayOfMonth       Int       @db.SmallInt
   openedDate          DateTime? @db.Date
   /// The account an installment is paid from by default. A debt is a
   /// recurring obligation, unlike a one-off expense, so remembering this once
   /// is what makes "record payment" a single click every month instead of a
   /// re-pick — recordPayment falls back to it whenever a payment does not
   /// specify its own account.
-  accountId           String?  @db.Uuid
-  isClosed            Boolean  @default(false)
+  accountId           String?   @db.Uuid
+  isClosed            Boolean   @default(false)
   closedAt            DateTime?
-  notes               String?  @db.Text
+  notes               String?   @db.Text
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -554,24 +604,24 @@ model Debt {
 }
 
 model DebtPayment {
-  id             String   @id @default(uuid()) @db.Uuid
-  userId         String   @db.Uuid
-  debtId         String   @db.Uuid
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @db.Uuid
+  debtId            String   @db.Uuid
   /// Null when the payment was not tied to a tracked account — the money left
   /// somewhere, but nowhere this app knows to subtract it from.
-  accountId      String?  @db.Uuid
-  amountMinor    BigInt
+  accountId         String?  @db.Uuid
+  amountMinor       BigInt
   /// The split is recorded, not recomputed — a lender's actual allocation can
   /// differ from our model, and the ledger should reflect what happened.
-  principalMinor BigInt
-  interestMinor  BigInt
-  currency       String   @db.Char(3)
-  date           DateTime @db.Date
+  principalMinor    BigInt
+  interestMinor     BigInt
+  currency          String   @db.Char(3)
+  date              DateTime @db.Date
   /// Balance immediately after this payment, for an audit trail that does not
   /// require replaying the whole payment history.
   balanceAfterMinor BigInt
-  notes          String?  @db.Text
-  createdAt      DateTime @default(now())
+  notes             String?  @db.Text
+  createdAt         DateTime @default(now())
 
   debt    Debt              @relation(fields: [debtId], references: [id], onDelete: Cascade)
   account FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
@@ -632,24 +682,24 @@ model SavingsGoal {
 }
 
 model GoalContribution {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @db.Uuid
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @db.Uuid
   /// The account the money came out of. Null records the saving without
   /// moving any balance, which leaves it counted in two places.
-  accountId String? @db.Uuid
-  goalId      String   @db.Uuid
+  accountId       String?  @db.Uuid
+  goalId          String   @db.Uuid
   /// Signed: a withdrawal from the goal is a negative contribution.
   /// Denominated in `currency` — what the user actually typed.
-  amountMinor BigInt
-  currency    String   @db.Char(3)
+  amountMinor     BigInt
+  currency        String   @db.Char(3)
   /// The same contribution converted into the goal's currency at the rate on
   /// `date`, then frozen. The goal's running balance is the sum of these, so
   /// paying into a USD goal in SAR cannot restate the balance every time the
   /// riyal moves — the same reason expenses freeze baseAmountMinor.
   goalAmountMinor BigInt
   date            DateTime @db.Date
-  notes       String?  @db.Text
-  createdAt   DateTime @default(now())
+  notes           String?  @db.Text
+  createdAt       DateTime @default(now())
 
   goal    SavingsGoal       @relation(fields: [goalId], references: [id], onDelete: Cascade)
   account FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
@@ -686,13 +736,13 @@ model Budget {
 }
 
 model BudgetLine {
-  id         String  @id @default(uuid()) @db.Uuid
-  budgetId   String  @db.Uuid
-  categoryId String  @db.Uuid
-  limitMinor BigInt
-  rollover   Boolean @default(false)
+  id                        String  @id @default(uuid()) @db.Uuid
+  budgetId                  String  @db.Uuid
+  categoryId                String  @db.Uuid
+  limitMinor                BigInt
+  rollover                  Boolean @default(false)
   /// Unspent room carried in from last month, computed at month rollover.
-  rolloverFromPreviousMinor BigInt @default(0)
+  rolloverFromPreviousMinor BigInt  @default(0)
 
   budget   Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
   category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
@@ -835,18 +885,18 @@ model Notification {
 }
 
 model NotificationPreference {
-  id                String   @id @default(uuid()) @db.Uuid
-  userId            String   @unique @db.Uuid
+  id                String                @id @default(uuid()) @db.Uuid
+  userId            String                @unique @db.Uuid
   channels          NotificationChannel[] @default([IN_APP, EMAIL])
-  billDueLeadDays   Int      @default(3)
-  budgetWarnings    Boolean  @default(true)
-  debtReminders     Boolean  @default(true)
-  savingsMilestones Boolean  @default(true)
-  aiInsights        Boolean  @default(true)
+  billDueLeadDays   Int                   @default(3)
+  budgetWarnings    Boolean               @default(true)
+  debtReminders     Boolean               @default(true)
+  savingsMilestones Boolean               @default(true)
+  aiInsights        Boolean               @default(true)
   /// Local times in the user's timezone; nothing is pushed between them.
-  quietHoursStart   String?  @db.VarChar(5)
-  quietHoursEnd     String?  @db.VarChar(5)
-  updatedAt         DateTime @updatedAt
+  quietHoursStart   String?               @db.VarChar(5)
+  quietHoursEnd     String?               @db.VarChar(5)
+  updatedAt         DateTime              @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

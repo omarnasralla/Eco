@@ -228,6 +228,62 @@ reconcile never see it. A reconcile dated before the account's opening date is
 refused: it would not count as a movement since that date, so the balance would
 not land on the figure counted.
 
+## Automated capture
+
+```
+GET    /ingest/tokens
+POST   /ingest/tokens             Mint one; the secret is returned once
+DELETE /ingest/tokens/:id         Revoke
+POST   /ingest/expenses           Record a tap — capture-token auth, 120/hour
+```
+
+`POST /ingest/expenses` is the only route authenticated by something other
+than a session. A shortcut on a phone cannot refresh an access token, so it
+carries a non-expiring credential — and that is precisely why the credential
+can do so little: it appends an expense and nothing else. It cannot read a
+balance, move money, or sign in.
+
+The token embeds its owner, `eco_<user-id-hex>_<secret>`, so the row is found
+by tenant rather than by scanning every secret in the table. That is also what
+keeps the lookup working under row-level security, where a query has to know
+whose data it is reading before it reads it. Only the SHA-256 is stored.
+
+The body is shaped for what a phone actually has:
+
+```jsonc
+{
+  "amount": "$12.34",              // display text; parsed against the currency
+  "merchant": "Blue Bottle",
+  "card": "Visa (•••• 4321)",      // matched against account names
+  "date": "2026-09-27",            // optional, defaults to today
+  "reference": "tap-2026-09-27-01" // optional, idempotency key
+}
+```
+
+- **`amount` is parsed, not trusted to be a number.** The Wallet automation
+  hands a shortcut display text, and the decimal separator is ambiguous
+  without a currency: `1.234` is a thousand-odd in Beirut and one-and-a-bit in
+  Boston. The currency's own scale decides — see `parse-amount.ts`, which is
+  where the test cases for that live.
+- **`reference` makes a retry safe.** It is unique per user, so the same tap
+  posted twice returns the first expense with `duplicate: true` rather than
+  recording a second. A phone that never saw the first response should not be
+  punished for asking again.
+- **The category is inferred from the user's own history** — what they last
+  chose for that merchant, matched case-insensitively, ignoring rows that were
+  themselves captured and never confirmed. Failing an exact match it looks for
+  a merchant that is recognisably the same shop: one name a prefix of the
+  other, followed by a boundary character. The boundary is the safeguard — a
+  plain substring test files "Afternoon Cafe" under whatever "Noon" is. With nothing to infer from, the row
+  lands in Miscellaneous with `needsReview: true`. It still counts in balances,
+  budgets and every total: the money is gone whether or not anyone has agreed
+  which box it belongs in.
+- **Editing a captured expense clears `needsReview`.** Opening the row and
+  saving it is the confirmation, whether or not the category changed.
+- **Refunds are refused**, not guessed at. A negative amount could be money
+  coming back or a phone formatting something oddly, and a wrongly-signed row
+  is worse than a rejected one the user can see.
+
 ## Reports, notifications, currency, audit
 
 ```

@@ -382,7 +382,107 @@ correction dated earlier is not counted as a movement since that date, so the
 balance would not land on what you counted. Eco refuses rather than recording
 the money on a day it did not move.
 
-## 7. Summary of current gaps
+## 7. Recording Apple Pay taps automatically
+
+If most of your spending is a tap of the phone, you can have each one recorded
+as it happens instead of typing it later.
+
+There is no Apple API for this. Apple does not expose Apple Pay history to
+apps — FinanceKit reads Apple Card, Apple Cash and Savings only, in the US,
+for a handful of partner apps. What *is* available is an iOS automation that
+fires on a tap and can send the details somewhere. That somewhere is Eco.
+
+### 1. Create a token
+
+**Settings → Automatic expenses → Create token.** Name it after the phone.
+Copy the token then and there: only its hash is stored, so it cannot be shown
+again. Lost it? Revoke it and make another.
+
+A token can only add expenses. It cannot read balances, move money or sign in,
+which is what makes it safe enough to keep in a shortcut on a phone.
+
+### 2. Build the automation
+
+In **Shortcuts → Automation → New Automation**, choose **Wallet** (called
+**Transaction** before iOS 26).
+
+1. Select the cards you tap with.
+2. Leave categories and merchants unfiltered unless you want only some taps.
+3. Choose **Run Immediately**, and turn **Notify When Run** off — otherwise
+   every purchase ends with a banner.
+4. Add one action: **Get Contents of URL**.
+   - URL: `https://eco.169.58.227.114.sslip.io/eco/api/v1/ingest/expenses`
+   - Method: **POST**
+   - Headers: `X-Eco-Token` = your token, `Content-Type` = `application/json`
+   - Request Body: **JSON**, with these fields, each set to the matching
+     variable from the automation's Shortcut Input:
+
+     | Field | Value |
+     |---|---|
+     | `amount` | the transaction's Amount |
+     | `merchant` | the Merchant |
+     | `card` | the Card or Pass name |
+     | `reference` | Merchant + Amount + the current date **including seconds** |
+
+**`reference` must be different for every tap.** It is what makes a retry safe:
+the same reference carrying the same purchase returns the expense already
+recorded rather than a second copy. A *fixed* reference is the one setup
+mistake that loses money — every tap after the first collides with it. Eco now
+refuses that with a 409 naming the earlier purchase rather than silently
+swallowing the new one, but the fix is to include the time to the second so
+each tap is genuinely distinct.
+
+Field names in the automation's input vary a little between iOS versions. Pick
+the ones that carry the amount, the merchant and the card; the exact labels do
+not matter, only which value goes in which field.
+
+You do not need to clean up the amount. Eco parses what the phone sends —
+`$12.34`, `1,234.56`, `1.234,56` — against the currency, so `150,000` in
+Lebanese pounds and `0.500` in Kuwaiti dinars both land correctly.
+
+**Leave the currency symbol in.** If you spend in a currency other than your
+account's, the amount text is the only place that currency is named: Eco reads
+`SAR 3.00` as three riyals, but a bare `3.00` on a dollar account is three
+dollars — about four times as much. Stripping the amount down to digits throws
+that away. Where the symbol is ambiguous — `$` is three different dollars — add
+a `currency` field to the JSON body (`SAR`, `AED`, `USD`) and it wins over
+everything else.
+
+### 3. What happens to a captured tap
+
+- **The category is your own history.** If you have categorised that merchant
+  before, the tap gets the same category, silently. Nothing to confirm.
+- **Near-miss names are matched too.** Card terminals qualify names: you enter
+  "Nwateh" by hand, the tap arrives as "Nwateh Est". One name counts as the
+  same shop as another when one is a prefix of the other *and the next
+  character is a boundary* — a space, bracket or dash. So "Nwateh Est",
+  "Keeta (Baik)" and "Noon-Express" all inherit, while "Afternoon Cafe" does
+  not inherit from "Noon" and "Nwatehville" does not inherit from "Nwateh".
+  Names under four characters are never used this way. The longest match wins,
+  so "Keeta (Subway)" beats "Keeta" when both apply.
+- **A merchant Eco has not seen** lands in Miscellaneous, marked *category
+  guessed*. The Expenses screen shows how many are waiting, and **Review them**
+  filters to exactly those. Open one, set the category, save — and every
+  future tap at that merchant is filed there automatically.
+- Either way the money counts immediately, in balances, budgets and every
+  total. The mark is a question about the category, not a doubt about the
+  spend.
+- **The account** is matched from the card name, falling back to your primary
+  account.
+
+### Known limits
+
+- **Taps only.** In-app and in-browser Apple Pay purchases do not fire the
+  automation. Those still need entering by hand.
+- **The amount is what was authorised at the till**, which is not always what
+  settles: tips, fuel holds and foreign-currency purchases can differ by a
+  little. Section 6 is the fix — count the account and let Eco record the gap.
+- **Refunds are rejected** rather than guessed at, because a negative tap is
+  ambiguous. Record one as income, or reconcile the account.
+- The automation can take a few purchases to start firing reliably after you
+  create it. This appears to be an iOS quirk, not an Eco one.
+
+## 8. Summary of current gaps
 
 | Gap | Impact | Workaround |
 |---|---|---|

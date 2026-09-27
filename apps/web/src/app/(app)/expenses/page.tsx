@@ -66,6 +66,7 @@ function ExpensesContent() {
 
   const [search, setSearch] = useState('');
   const [categoryId, setCategoryId] = useState<string>('all');
+  const [reviewOnly, setReviewOnly] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(searchParams.get('new') === '1');
   const [editing, setEditing] = useState<ExpenseDto | null>(null);
   const accounts = useQuery({ queryKey: queryKeys.accounts, queryFn: fetchers.accounts });
@@ -75,8 +76,9 @@ function ExpensesContent() {
       limit: 50,
       ...(search ? { search } : {}),
       ...(categoryId !== 'all' ? { categoryId } : {}),
+      ...(reviewOnly ? { needsReview: true } : {}),
     }),
-    [search, categoryId],
+    [search, categoryId, reviewOnly],
   );
 
   const categories = useQuery({ queryKey: queryKeys.categories, queryFn: fetchers.categories });
@@ -84,6 +86,14 @@ function ExpensesContent() {
     queryKey: queryKeys.expenses(filters),
     queryFn: () => fetchers.expenses(filters),
   });
+
+  // Its own query rather than a count of the list above: the prompt has to be
+  // visible while a filter is applied, and the list may be showing anything.
+  const awaitingReview = useQuery({
+    queryKey: queryKeys.expenses({ limit: 50, needsReview: true }),
+    queryFn: () => fetchers.expenses({ limit: 50, needsReview: true }),
+  });
+  const reviewCount = awaitingReview.data?.items.length ?? 0;
 
   const money = (minor: number) => formatMoney(minor, currency, { locale });
 
@@ -103,6 +113,29 @@ function ExpensesContent() {
       {/* Pacing before the ledger: the useful question on this screen is what
           is still spendable today, not what was spent yesterday. */}
       <DailyAllowanceCard categoryId={categoryId} />
+
+      {/* Captured taps whose category was inferred. Shown as a prompt rather
+          than a warning: nothing is wrong, and the money is already counted —
+          someone just has not confirmed where it belongs. Opening one and
+          saving it is the confirmation. */}
+      {reviewCount > 0 ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/40 px-4 py-3">
+          <p className="text-sm">
+            <span className="font-medium">
+              {reviewCount} captured expense{reviewCount === 1 ? '' : 's'}
+            </span>{' '}
+            {reviewCount === 1 ? 'was' : 'were'} filed under a guessed category.
+          </p>
+          <Button
+            type="button"
+            variant={reviewOnly ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setReviewOnly((on) => !on)}
+          >
+            {reviewOnly ? 'Show all' : 'Review them'}
+          </Button>
+        </div>
+      ) : null}
 
       {/* Filters sit in one row above the list, per the interaction spec. */}
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
@@ -173,6 +206,7 @@ function ExpensesContent() {
                       {expense.category?.name} · {formatDate(expense.date, locale)}
                       {expense.isRecurring ? ' · recurring' : ''}
                       {expense.excludedFromBudget ? ' · outside budget' : ''}
+                      {expense.needsReview ? ' · category guessed' : ''}
                     </p>
                   </div>
                   <div className="shrink-0 text-right">

@@ -122,6 +122,11 @@ export interface ExpenseDto {
   recurringFrequency: Frequency | null;
   /** Spent, but kept out of budget limits. Still counted in balances. */
   excludedFromBudget: boolean;
+  /**
+   * Captured automatically and filed under a guessed category. Counted like
+   * any other expense; this only asks a human to confirm where it belongs.
+   */
+  needsReview: boolean;
   tags: string[];
   createdAt: string;
   updatedAt: string;
@@ -651,6 +656,37 @@ export interface ReconciliationDto {
   receiptId: string | null;
   /** The account, with its balance recomputed — now equal to what you counted. */
   account: AccountDto;
+}
+
+/** A capture credential. The secret itself is returned only once, at creation. */
+export interface IngestTokenDto {
+  id: string;
+  label: string;
+  lastUsedAt: string | null;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+export interface CreatedIngestTokenDto extends IngestTokenDto {
+  /**
+   * The only time this is ever readable. Stored as a SHA-256 hash, so it
+   * cannot be shown again and a database read cannot post expenses as the user.
+   */
+  token: string;
+}
+
+/** What the phone gets back, so a shortcut can show a useful confirmation. */
+export interface IngestResultDto {
+  expenseId: string;
+  /** True when this reference had already been recorded; nothing was created. */
+  duplicate: boolean;
+  amountMinor: number;
+  currency: string;
+  merchant: string;
+  categoryName: string;
+  /** The category was inferred rather than chosen, and wants confirming. */
+  needsReview: boolean;
+  accountName: string | null;
 }
 
 export interface AccountsSummaryDto {

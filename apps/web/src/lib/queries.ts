@@ -113,7 +113,7 @@ export const fetchers = {
       { query: { months } },
     ),
 
-  expenses: (filters: Record<string, string | number | undefined> = {}) =>
+  expenses: (filters: Record<string, string | number | boolean | undefined> = {}) =>
     api.get<Paginated<ExpenseDto>>('/expenses', { query: filters }),
 
   categories: () => api.get<CategoryDto[]>('/categories'),

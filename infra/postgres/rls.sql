@@ -70,7 +70,11 @@ DECLARE
     'notifications', 'notification_preferences', 'push_tokens',
     'reports', 'recommendations', 'ai_conversations',
     'spending_patterns', 'forecast_snapshots', 'refresh_tokens',
-    'verification_tokens', 'oauth_accounts'
+    'verification_tokens', 'oauth_accounts',
+    -- Capture tokens carry their owner's id in the token itself, so the
+    -- tenant is known before the lookup and this policy does not lock the
+    -- authenticating query out of its own row.
+    'ingest_tokens'
   ];
 BEGIN
   FOREACH t IN ARRAY direct_tables LOOP

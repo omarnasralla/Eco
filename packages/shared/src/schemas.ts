@@ -205,6 +205,8 @@ export const expenseQuerySchema = z.object({
   minAmountMinor: z.coerce.number().int().nonnegative().optional(),
   maxAmountMinor: z.coerce.number().int().nonnegative().optional(),
   search: z.string().trim().max(160).optional(),
+  /** Only the captured rows whose category nobody has confirmed yet. */
+  needsReview: z.coerce.boolean().optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   /**
@@ -472,6 +474,55 @@ export const reconcileAccountSchema = z.object({
 });
 
 export type ReconcileAccountInput = z.infer<typeof reconcileAccountSchema>;
+
+/* ── Automated capture ────────────────────────────────────── */
+
+/**
+ * What a phone posts when a card is tapped.
+ *
+ * Shaped for the iOS Wallet automation, which hands a shortcut display text
+ * rather than numbers — so `amount` accepts "$12.34" and the server parses it
+ * against the currency. `amountMinor` is there for any caller that already
+ * knows the exact integer and should not have its precision re-derived.
+ */
+export const ingestExpenseSchema = z
+  .object({
+    /** Display text straight from the phone: "$12.34", "1.234,56", "﷼ 45". */
+    amount: z.union([z.string().trim().min(1).max(40), z.number()]).optional(),
+    /** For callers that already have exact minor units. Wins over `amount`. */
+    amountMinor: z.number().int().positive().optional(),
+    /** Defaults to the matched account's currency, else the user's base. */
+    currency: currencyCode.optional(),
+    merchant: z.string().trim().min(1).max(160),
+    /** The Wallet card name, matched against account names. */
+    card: z.string().trim().max(120).nullish(),
+    /** Defaults to today. A tap is posted as it happens. */
+    date: isoDate.optional(),
+    /**
+     * Idempotency key. A phone on a bad connection retries, and the same tap
+     * must not land twice — send anything stable and unique to the tap.
+     *
+     * Generous limit on purpose. The natural thing to build in a shortcut is
+     * merchant + amount + timestamp, and a long merchant name pushes that past
+     * any tight bound — rejecting it would lose the expense over the length of
+     * a shop's name. Anything longer than the stored column is hashed server
+     * side, which is just as stable and just as unique.
+     */
+    reference: z.string().trim().max(512).nullish(),
+    notes: z.string().trim().max(500).nullish(),
+  })
+  .refine((v) => v.amount !== undefined || v.amountMinor !== undefined, {
+    message: 'Send either amount or amountMinor',
+    path: ['amount'],
+  });
+
+/** Naming one, so a lost phone can be revoked without cutting off the others. */
+export const ingestTokenSchema = z.object({
+  label: z.string().trim().min(1).max(80),
+});
+
+export type IngestExpenseInput = z.infer<typeof ingestExpenseSchema>;
+export type IngestTokenInput = z.infer<typeof ingestTokenSchema>;
 
 /* ── Income receipts ──────────────────────────────────────── */
 

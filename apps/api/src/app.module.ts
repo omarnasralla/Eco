@@ -23,6 +23,7 @@ import { AuditInterceptor } from './modules/audit/audit.interceptor';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuditService } from './modules/audit/audit.service';
 import { AiModule } from './modules/ai/ai.module';
+import { IngestModule } from './modules/ingest/ingest.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from './modules/auth/guards/roles.guard';
@@ -98,6 +99,7 @@ import { UsersModule } from './modules/users/users.module';
     DebtsModule,
     GoalsModule,
     BudgetsModule,
+    IngestModule,
     DashboardModule,
     AiModule,
     NotificationsModule,
