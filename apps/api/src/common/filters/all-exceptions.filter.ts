@@ -40,6 +40,19 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     } else if (status === HttpStatus.UNAUTHORIZED || status === HttpStatus.FORBIDDEN) {
       this.logger.warn(`${request.method} ${request.url} → ${status} [${requestId}]`);
+    } else if (status >= HttpStatus.BAD_REQUEST && status !== HttpStatus.NOT_FOUND) {
+      // Every other 4xx used to be returned to the client and recorded
+      // nowhere. A phone was told its capture had conflicted while the server
+      // logged nothing at all, so a rejected expense was indistinguishable
+      // from one that was never sent. 404 stays out: on a public interface it
+      // is mostly scanners, and the noise would bury this.
+      //
+      // The reason, not the payload. A validation message names the field that
+      // failed ("merchant: Required"); it never carries the value.
+      const reason = Array.isArray(message) ? message.join('; ') : String(message);
+      this.logger.warn(
+        `${request.method} ${request.url} → ${status} [${requestId}] ${reason}`,
+      );
     }
 
     const body: ApiErrorBody = {
