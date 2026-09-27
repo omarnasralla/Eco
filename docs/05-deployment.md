@@ -153,10 +153,51 @@ runs against the new schema: expand, deploy, contract in the following release.
 
 ## Backups
 
-Not automated in this repository — it is a managed-database concern, and the
-right implementation depends on the provider. The requirements:
+[`scripts/backup-db.sh`](../scripts/backup-db.sh) dumps `eco` out of the
+Postgres container into `/var/backups/eco` (`ECO_BACKUP_DIR`), keeping the 12
+most recent archives (`ECO_BACKUP_KEEP`). Root's crontab runs it on the 1st of
+each month at 03:30, logging to `/var/log/eco/backup.log`:
 
-- Point-in-time recovery, 30-day retention.
-- Restores **tested**, not merely configured. An untested backup is a hypothesis.
-- Encrypted at rest with a customer-managed key.
-- `audit_logs` retained beyond the main retention window for compliance.
+```
+30 3 1 * * /root/Eco/scripts/backup-db.sh --verify >> /var/log/eco/backup.log 2>&1
+```
+
+The database is the whole backup: reports render in memory rather than to disk,
+and Redis holds only cache, sessions and rate-limit counters.
+
+This is the operator's backup: everything, one file, restorable into a database.
+Users have their own, separately — *Settings → Your data → Download backup*
+(`GET /users/me/export`), which hands one user their own rows as JSON. Neither
+replaces the other: a user's export cannot rebuild the service, and a database
+dump is not something to hand a person who asks for their data.
+
+`--verify` restores each fresh dump into a scratch database, counts what came
+back and drops it — so a dump that cannot be restored is discovered on the 1st
+rather than during an outage. Every run also reads the archive's table of
+contents back through `pg_restore --list` before accepting it.
+
+Restore, in full or one table:
+
+```bash
+docker exec -i eco-postgres pg_restore -U eco -d eco --clean --if-exists \
+  --no-owner --no-privileges < /var/backups/eco/eco-<stamp>.dump
+
+# One table, into a running database:
+docker exec -i eco-postgres pg_restore -U eco -d eco --data-only \
+  -t expenses --no-owner < /var/backups/eco/eco-<stamp>.dump
+```
+
+**`ENCRYPTION_KEY` is not in the dump, on purpose.** 2FA secrets are AES-256-GCM
+encrypted at rest, so an archive stored beside the key is an archive with no
+encryption at all. Keep the key somewhere the backup directory is not; restoring
+without it recovers everything except those columns.
+
+Still open, and worth closing before this carries real money:
+
+- **Off-host copies.** Archives sit on the machine they back up, which survives
+  a bad migration but not a dead disk. Point `ECO_BACKUP_DIR` at mounted remote
+  storage, or add an upload step.
+- **Point-in-time recovery.** Monthly snapshots mean up to a month of loss.
+  Continuous archiving (WAL shipping) or a managed provider's PITR is the fix;
+  the cadence here is a floor, not a target.
+- **Longer `audit_logs` retention** than the main window, for compliance.
