@@ -74,18 +74,27 @@ destinations at once.
    everywhere*. Note that the page only **reports** the 2FA state — there is no
    enable button yet; turning it on means calling `POST /auth/2fa/setup` and
    `POST /auth/2fa/enable`.
-5. **Add your income** at `/income` → *Add* — see section 4. This matters first
+5. **Take a backup whenever you want one** at `/settings` → *Your data* →
+   *Download backup*. It gives you a single JSON file — accounts, income
+   sources and receipts, categories, expenses, debts and their payments, goals
+   and their contributions, budgets and notification preferences — named
+   `eco-backup-<date>.json`. Rows you deleted in the last 30 days are in it too,
+   with their `deletedAt` set, since within the grace window they are still
+   restorable. Your password hash, 2FA secret and session tokens are never
+   included. The file is **not** encrypted and lists what you earn, owe and
+   spend, so keep it where you would keep a bank statement.
+6. **Add your income** at `/income` → *Add* — see section 4. This matters first
    because the dashboard's savings rate, the budget headroom, the debt payoff
    plans and the AI health score all divide by income. With no income recorded, a fresh
    account reports a 0 monthly run rate and every derived figure reads as if
    you earn nothing.
-6. **Add expenses** at `/expenses` → *Add*. The dialog also opens directly via
+7. **Add expenses** at `/expenses` → *Add*. The dialog also opens directly via
    the deep link `/expenses?new=1`, which is handy as a home-screen shortcut;
    `/income?new=1` does the same for income.
-7. **Add a savings goal** at `/goals` → *Add* — see section 5. This is where an
+8. **Add a savings goal** at `/goals` → *Add* — see section 5. This is where an
    amount set aside for savings goes, and it is what the dashboard's net worth
    is built from.
-8. **Set a budget** at `/budgets` once there is income and a few weeks of
+9. **Set a budget** at `/budgets` once there is income and a few weeks of
    spending for it to be measured against.
 
 If you earn or spend in a currency other than the one you picked in step 2,

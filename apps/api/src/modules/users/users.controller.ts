@@ -1,4 +1,6 @@
-import { Body, Controller, Delete, Get, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Patch, Post, Res } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+import type { Response } from 'express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { updateProfileSchema, type UpdateProfileInput } from '@eco/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -35,10 +37,27 @@ export class UsersController {
   }
 
   @Get('me/export')
+  // Same bucket and ceiling as report generation: this reads every table the
+  // user owns, so it is not something to allow on a loop. The ceiling in
+  // app.module is deliberately unreachable — this is the real limit.
+  @Throttle({ export: { limit: 20, ttl: 3_600_000 } })
   @Audit('EXPORT', 'User')
   @ApiOperation({ summary: 'Download every record we hold (GDPR portability)' })
-  async exportData(@CurrentUser('id') userId: string) {
-    return this.users.exportData(userId);
+  async exportData(@CurrentUser('id') userId: string, @Res() res: Response): Promise<void> {
+    const data = await this.users.exportData(userId);
+    // Indented on purpose: a backup is a file a person may well open and read,
+    // and 2-space JSON costs a few percent on a file this size.
+    const body = Buffer.from(JSON.stringify(data, null, 2), 'utf8');
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="eco-backup-${new Date().toISOString().slice(0, 10)}.json"`,
+    );
+    res.setHeader('Content-Length', body.length);
+    // Every figure this user has: never let a shared proxy hold a copy.
+    res.setHeader('Cache-Control', 'no-store, private');
+    res.send(body);
   }
 
   @Delete('me')

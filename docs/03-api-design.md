@@ -212,7 +212,8 @@ GET /audit/me                      Your own account activity
 GET /users/me
 PATCH /users/me
 POST /users/me/onboarding/complete
-GET /users/me/export               GDPR Article 20 portability
+GET /users/me/export               GDPR portability + Settings backup button;
+                                   attachment, 20/hour
 DELETE /users/me                   30-day grace, then hard purge
 
 GET /health/live                   Liveness — checks nothing external

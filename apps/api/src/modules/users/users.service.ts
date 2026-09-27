@@ -3,6 +3,7 @@ import type { UpdateProfileInput, UserDto } from '@eco/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { toUserDto } from './user.mapper';
+import { toJsonSafe } from '../../common/utils/serialize';
 import { CurrencyService } from '../currency/currency.service';
 
 @Injectable()
@@ -90,28 +91,68 @@ export class UsersService {
   }
 
   /**
-   * GDPR Article 20 data portability: everything we hold, as one JSON document.
-   * Secrets are excluded — the point is the user's own data, not our hashes.
+   * GDPR Article 20 data portability, and the user-facing "download a backup"
+   * button in Settings: everything we hold about one user, as one JSON document.
+   *
+   * What is deliberately *not* here:
+   *
+   *   - Credentials and tokens — password hash, 2FA secret, refresh tokens,
+   *     verification tokens, OAuth links, push tokens. `toUserDto` drops the
+   *     first two; the rest are simply not read. They are our secrets about the
+   *     user, not the user's data, and a file in a Downloads folder is the last
+   *     place they should live.
+   *   - Derived artefacts — forecasts, spending patterns, recommendations. They
+   *     are recomputed from the rows below, so exporting them would age badly
+   *     and inflate the file for nothing.
+   *   - `audit_logs`, which are retained on their own compliance schedule and
+   *     can run to far more rows than everything else combined.
+   *
+   * Soft-deleted rows ARE included, with their `deletedAt` intact. A backup
+   * that silently dropped what the user deleted would be a worse backup, and
+   * within the 30-day grace window those rows are still restorable.
    */
   async exportData(userId: string): Promise<Record<string, unknown>> {
-    const [user, incomes, categories, expenses, debts, payments, goals, contributions, budgets] =
-      await Promise.all([
-        this.prisma.user.findUniqueOrThrow({ where: { id: userId } }),
-        this.prisma.incomeSource.findMany({ where: { userId } }),
-        this.prisma.category.findMany({ where: { userId } }),
-        this.prisma.expense.findMany({ where: { userId } }),
-        this.prisma.debt.findMany({ where: { userId } }),
-        this.prisma.debtPayment.findMany({ where: { userId } }),
-        this.prisma.savingsGoal.findMany({ where: { userId } }),
-        this.prisma.goalContribution.findMany({ where: { userId } }),
-        this.prisma.budget.findMany({ where: { userId }, include: { lines: true } }),
-      ]);
+    const [
+      user,
+      accounts,
+      incomes,
+      receipts,
+      categories,
+      expenses,
+      debts,
+      payments,
+      goals,
+      contributions,
+      budgets,
+      notificationPreferences,
+    ] = await Promise.all([
+      this.prisma.user.findUniqueOrThrow({ where: { id: userId } }),
+      this.prisma.financialAccount.findMany({ where: { userId } }),
+      this.prisma.incomeSource.findMany({ where: { userId } }),
+      // Receipts are the income that actually arrived, as opposed to the
+      // schedule that says it should. Exporting sources alone would hand back
+      // a plan and call it a history.
+      this.prisma.incomeReceipt.findMany({ where: { userId } }),
+      this.prisma.category.findMany({ where: { userId } }),
+      this.prisma.expense.findMany({ where: { userId } }),
+      this.prisma.debt.findMany({ where: { userId } }),
+      this.prisma.debtPayment.findMany({ where: { userId } }),
+      this.prisma.savingsGoal.findMany({ where: { userId } }),
+      this.prisma.goalContribution.findMany({ where: { userId } }),
+      this.prisma.budget.findMany({ where: { userId }, include: { lines: true } }),
+      this.prisma.notificationPreference.findMany({ where: { userId } }),
+    ]);
 
-    return {
+    // Prisma hands back bigint, Decimal and Date, none of which JSON.stringify
+    // accepts as-is — an unconverted export threw "Do not know how to serialize
+    // a BigInt" for every user who had so much as one expense.
+    return toJsonSafe({
       exportedAt: new Date().toISOString(),
       format: 'eco-data-export-v1',
       profile: toUserDto(user),
+      financialAccounts: accounts,
       incomeSources: incomes,
+      incomeReceipts: receipts,
       categories,
       expenses,
       debts,
@@ -119,7 +160,8 @@ export class UsersService {
       savingsGoals: goals,
       goalContributions: contributions,
       budgets,
-    };
+      notificationPreferences,
+    }) as Record<string, unknown>;
   }
 
   /**

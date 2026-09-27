@@ -1,9 +1,9 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
-import { LogOut, Moon, ShieldCheck, Sun } from 'lucide-react';
+import { Download, Loader2, LogOut, Moon, ShieldCheck, Sun } from 'lucide-react';
 import { CURRENCIES } from '@eco/shared';
 import { api } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-provider';
@@ -38,9 +38,36 @@ export default function SettingsPage() {
     queryFn: () => api.get<Session[]>('/auth/sessions'),
   });
 
+  const [backupError, setBackupError] = useState<string | null>(null);
+
+  const backup = useMutation({
+    mutationFn: async () => {
+      // The export comes back as JSON rather than as an opaque file, so
+      // api-client parses it and the download is assembled here. Serialising
+      // again is cheap next to the round trip, and it keeps the endpoint
+      // honestly typed as application/json for anything else that calls it.
+      const data = await api.get<unknown>('/users/me/export');
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: 'application/json',
+      });
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `eco-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    },
+    onMutate: () => setBackupError(null),
+    onError: () =>
+      setBackupError('Could not build your backup. Please try again in a moment.'),
+  });
+
   return (
     <>
-      <PageHeader title="Settings" description="Your profile, appearance and security." />
+      <PageHeader title="Settings" description="Your profile, appearance, data and security." />
 
       <div className="space-y-4">
         <Card>
@@ -120,6 +147,47 @@ export default function SettingsPage() {
 
         <Card>
           <CardHeader className="pb-3">
+            <CardTitle className="text-base">Your data</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <p className="text-sm font-medium">Download a backup</p>
+              <p className="text-sm text-muted-foreground">
+                One JSON file with your accounts, income, expenses, categories, debts, goals
+                and budgets — everything you have entered, including anything you have
+                deleted in the last 30 days. Sign-in credentials are never included.
+              </p>
+            </div>
+
+            {backupError ? (
+              <p role="alert" className="text-sm text-destructive">
+                {backupError}
+              </p>
+            ) : null}
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => backup.mutate()}
+              disabled={backup.isPending}
+            >
+              {backup.isPending ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <Download className="size-4" aria-hidden />
+              )}
+              {backup.isPending ? 'Preparing…' : 'Download backup'}
+            </Button>
+
+            <p className="text-xs text-muted-foreground">
+              The file is yours and is not encrypted — it lists what you earn, owe and spend.
+              Keep it somewhere you would keep a bank statement.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <ShieldCheck className="size-4 text-primary" aria-hidden />
               Security
@@ -180,3 +248,4 @@ export default function SettingsPage() {
     </>
   );
 }
+
