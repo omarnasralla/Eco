@@ -189,6 +189,45 @@ produced the number.
 Recommendations always ship their `evidence` — the exact inputs behind the
 advice — because advice a user cannot check is advice taken on faith.
 
+## Accounts
+
+```
+GET    /accounts
+GET    /accounts/summary           Every balance in the base currency
+GET    /accounts/:id
+POST   /accounts
+PATCH  /accounts/:id               Rename, or set the balance
+POST   /accounts/:id/reconcile     Count the real money; record the difference
+DELETE /accounts/:id
+```
+
+A balance is derived, never stored: the opening figure plus every transaction
+assigned since. An edited transaction moves it by exactly what it moved, and a
+deleted one un-moves it.
+
+There are two ways to correct one, and they mean different things:
+
+- **`PATCH /accounts/:id` with `balanceMinor`** solves backwards for the
+  opening figure that makes today's balance equal what you typed. Right when
+  the opening figure itself was wrong — the discrepancy is not spending, so
+  nothing should be recorded as spending.
+- **`POST /accounts/:id/reconcile` with `actualBalanceMinor`** keeps the
+  opening figure and records the difference as a transaction: a shortfall as an
+  expense in the `reconciliation` category, a surplus as a one-off income
+  receipt with no source behind it. Right when money actually moved and nobody
+  wrote it down — which is the usual reason a hand count disagrees.
+
+The second is the honest default for cash. The first silently erases the gap:
+the balance is correct afterwards and the money is nowhere, so spending totals,
+budgets and the savings rate all under-report by the amount that went missing.
+
+The correction is an ordinary transaction — assigned to the account, dated, and
+counted by budgets and the dashboard like any other. The `reconciliation`
+category is created on first use rather than seeded, so users who never
+reconcile never see it. A reconcile dated before the account's opening date is
+refused: it would not count as a movement since that date, so the balance would
+not land on the figure counted.
+
 ## Reports, notifications, currency, audit
 
 ```

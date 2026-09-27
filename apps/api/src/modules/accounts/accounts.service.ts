@@ -1,11 +1,19 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import type { AccountDto, AccountInput, AccountsSummaryDto, UpdateAccountInput } from '@eco/shared';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import type {
+  AccountDto,
+  AccountInput,
+  AccountsSummaryDto,
+  ReconcileAccountInput,
+  ReconciliationDto,
+  UpdateAccountInput,
+} from '@eco/shared';
+import { RECONCILIATION_CATEGORY } from '@eco/shared';
 import type { FinancialAccount } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { CurrencyService } from '../currency/currency.service';
 import { toNumber } from '../../common/utils/money';
-import { fromIsoDate } from '../../common/utils/dates';
+import { fromIsoDate, requireIsoDate, todayIso } from '../../common/utils/dates';
 
 function toDto(account: FinancialAccount, balanceMinor: number, movements: number): AccountDto {
   return {
@@ -282,6 +290,156 @@ export class AccountsService {
   private async openingFor(account: FinancialAccount, targetMinor: number): Promise<number> {
     const { net } = await this.movementsSince(account);
     return targetMinor - net;
+  }
+
+  /**
+   * Reconcile an account against money counted by hand.
+   *
+   * The difference between what you counted and what the ledger derives is
+   * recorded as a transaction — a shortfall as an expense, a surplus as a
+   * one-off receipt — so the balance lands on the counted figure *and* the gap
+   * stays visible as money that moved.
+   *
+   * This is the honest sibling of `update({ balanceMinor })`, which reaches the
+   * same balance by solving backwards for the opening figure. That is right
+   * when the opening figure was simply wrong; it is wrong when cash actually
+   * went somewhere, because the spending disappears from every total that is
+   * supposed to explain where the money went.
+   *
+   * The correction is an ordinary transaction on purpose. It is assigned to the
+   * account, dated, and counted by budgets, cash flow and the dashboard exactly
+   * like any other — an unexplained £40 is still £40 you no longer have.
+   */
+  async reconcile(
+    userId: string,
+    id: string,
+    input: ReconcileAccountInput,
+    userCurrency: string,
+  ): Promise<ReconciliationDto> {
+    const account = await this.prisma.financialAccount.findFirst({
+      where: { id, userId, deletedAt: null },
+    });
+    if (!account) throw new NotFoundException('Account not found');
+
+    const date = input.date ?? todayIso();
+    // A correction dated before the opening figure is not a movement since that
+    // figure, so `movementsSince` would not count it and the balance would not
+    // land on what was counted. Refusing is the only honest answer: silently
+    // moving the date would record the money on a day it did not move.
+    if (date < requireIsoDate(account.openingBalanceDate)) {
+      throw new BadRequestException(
+        `That date is before this account's opening balance date (${requireIsoDate(
+          account.openingBalanceDate,
+        )}). Count it on or after that day, or change the opening balance instead.`,
+      );
+    }
+
+    const { net } = await this.movementsSince(account);
+    const previousBalanceMinor = toNumber(account.openingBalanceMinor) + net;
+    const differenceMinor = input.actualBalanceMinor - previousBalanceMinor;
+
+    const settled = async (
+      outcome: ReconciliationDto['outcome'],
+      expenseId: string | null,
+      receiptId: string | null,
+    ): Promise<ReconciliationDto> => {
+      await this.redis.invalidateUser(userId);
+      return {
+        outcome,
+        differenceMinor,
+        currency: account.currency,
+        previousBalanceMinor,
+        date,
+        expenseId,
+        receiptId,
+        account: await this.withBalance(account),
+      };
+    };
+
+    // Nothing to record. Writing a zero-amount row to mark the occasion would
+    // put a transaction in the ledger that moved no money.
+    if (differenceMinor === 0) return settled('MATCHED', null, null);
+
+    const amountMinor = Math.abs(differenceMinor);
+    // Denominated in the account's own currency, which is what was counted.
+    // Every aggregate sums the base figure, so it is frozen at the rate for the
+    // day of the count, exactly as a manually entered transaction would be.
+    const baseAmountMinor = await this.currency.convert(
+      amountMinor,
+      account.currency,
+      userCurrency,
+      date,
+    );
+    const note = input.notes?.trim() || null;
+
+    if (differenceMinor < 0) {
+      const categoryId = await this.reconciliationCategoryId(userId);
+      const expense = await this.prisma.expense.create({
+        data: {
+          userId,
+          categoryId,
+          accountId: account.id,
+          amountMinor: BigInt(amountMinor),
+          currency: account.currency,
+          baseAmountMinor: BigInt(baseAmountMinor),
+          date: fromIsoDate(date),
+          merchant: `Reconciled ${account.name}`,
+          notes: note,
+        },
+      });
+      return settled('SHORTFALL', expense.id, null);
+    }
+
+    const receipt = await this.prisma.incomeReceipt.create({
+      data: {
+        userId,
+        // No schedule produced this, so no source. Inventing one would make a
+        // one-off into a recurring rate and inflate every forward projection.
+        incomeSourceId: null,
+        name: `Reconciled ${account.name}`,
+        accountId: account.id,
+        amountMinor: BigInt(amountMinor),
+        currency: account.currency,
+        baseAmountMinor: BigInt(baseAmountMinor),
+        date: fromIsoDate(date),
+        notes: note,
+      },
+    });
+    return settled('SURPLUS', null, receipt.id);
+  }
+
+  /**
+   * The user's reconciliation category, created on first use.
+   *
+   * Not seeded at registration: most users never reconcile, and an unused
+   * category in every expense picker is clutter earned by nobody. Matched by
+   * slug rather than name so a rename does not orphan it and produce a second.
+   */
+  private async reconciliationCategoryId(userId: string): Promise<string> {
+    const existing = await this.prisma.category.findFirst({
+      where: { userId, slug: RECONCILIATION_CATEGORY.slug, deletedAt: null },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+
+    const created = await this.prisma.category.create({
+      data: {
+        userId,
+        slug: RECONCILIATION_CATEGORY.slug,
+        name: RECONCILIATION_CATEGORY.name,
+        icon: RECONCILIATION_CATEGORY.icon,
+        color: RECONCILIATION_CATEGORY.color,
+        // System, so it cannot be deleted out from under the rows that point at
+        // it; `onDelete: Restrict` on the relation would refuse anyway.
+        isSystem: true,
+        // Unaccounted money is not an essential cost, and counting it as one
+        // would inflate the emergency-fund target.
+        isEssential: false,
+        sortOrder: 99,
+      },
+      select: { id: true },
+    });
+    return created.id;
   }
 
   async remove(userId: string, id: string): Promise<void> {

@@ -630,6 +630,29 @@ export interface AccountDto {
   createdAt: string;
 }
 
+/**
+ * The result of reconciling an account against a hand-counted figure.
+ *
+ * `differenceMinor` is signed as `counted - system`: negative means money left
+ * without being recorded, positive means money arrived that was not. Exactly
+ * one of the two ids is set, and neither when the figures already agreed.
+ */
+export interface ReconciliationDto {
+  outcome: 'MATCHED' | 'SHORTFALL' | 'SURPLUS';
+  /** Signed, in the account's currency: what you counted minus what we held. */
+  differenceMinor: number;
+  currency: string;
+  /** What the system thought the balance was, before this correction. */
+  previousBalanceMinor: number;
+  date: string;
+  /** The expense created to absorb a shortfall. */
+  expenseId: string | null;
+  /** The one-off receipt created to absorb a surplus. */
+  receiptId: string | null;
+  /** The account, with its balance recomputed — now equal to what you counted. */
+  account: AccountDto;
+}
+
 export interface AccountsSummaryDto {
   /** Every account converted into the user's base currency and added up. */
   totalMinor: number;

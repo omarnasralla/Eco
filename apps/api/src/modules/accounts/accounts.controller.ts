@@ -13,8 +13,10 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   accountSchema,
+  reconcileAccountSchema,
   updateAccountSchema,
   type AccountInput,
+  type ReconcileAccountInput,
   type UpdateAccountInput,
 } from '@eco/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -64,6 +66,19 @@ export class AccountsController {
     @Body(zodBody(updateAccountSchema)) dto: UpdateAccountInput,
   ) {
     return this.accounts.update(userId, id, dto);
+  }
+
+  @Post(':id/reconcile')
+  @Audit('UPDATE', 'FinancialAccount')
+  @ApiOperation({
+    summary: 'Set the balance to a hand-counted figure, recording the difference',
+  })
+  async reconcile(
+    @CurrentUser() user: { id: string; currency: string },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(zodBody(reconcileAccountSchema)) dto: ReconcileAccountInput,
+  ) {
+    return this.accounts.reconcile(user.id, id, dto, user.currency);
   }
 
   @Delete(':id')

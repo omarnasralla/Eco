@@ -450,6 +450,29 @@ export const updateAccountSchema = accountSchema.partial();
 export type AccountInput = z.infer<typeof accountSchema>;
 export type UpdateAccountInput = z.infer<typeof updateAccountSchema>;
 
+/**
+ * Reconciling an account against the money actually in it.
+ *
+ * Distinct from sending `balanceMinor` to PATCH /accounts/:id, which also makes
+ * the balance equal what you type — but does it by solving backwards for the
+ * opening figure, so the discrepancy disappears into history and is never
+ * spent by anyone. This records the difference as a transaction instead: what
+ * you counted is the truth, and the gap is money that went somewhere.
+ */
+export const reconcileAccountSchema = z.object({
+  /** What you actually counted. Signed: an account can genuinely be overdrawn. */
+  actualBalanceMinor: signedMinorAmount,
+  /**
+   * When you counted it. Defaults to today, and cannot precede the account's
+   * opening date — a correction dated before the opening figure is not counted
+   * as a movement, so the balance would not land on the number you typed.
+   */
+  date: isoDate.optional(),
+  notes: z.string().trim().max(500).nullish(),
+});
+
+export type ReconcileAccountInput = z.infer<typeof reconcileAccountSchema>;
+
 /* ── Income receipts ──────────────────────────────────────── */
 
 /** Recording a payment against an existing source. */

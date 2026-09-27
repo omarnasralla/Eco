@@ -4,15 +4,17 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Loader2, Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import { Loader2, Pencil, Plus, Scale, Star, Trash2 } from 'lucide-react';
 import {
   ACCOUNT_KINDS,
   ACCOUNT_KIND_LABELS,
   accountSchema,
   formatMoney,
   toMajorUnits,
+  toMinorUnits,
   type AccountDto,
   type AccountInput,
+  type ReconciliationDto,
 } from '@eco/shared';
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
@@ -47,6 +49,7 @@ export default function AccountsPage() {
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<AccountDto | null>(null);
+  const [counting, setCounting] = useState<AccountDto | null>(null);
 
   const summary = useQuery({
     queryKey: queryKeys.accountsSummary,
@@ -107,12 +110,12 @@ export default function AccountsPage() {
             <CardContent className="p-0">
               <ul className="divide-y">
                 {accounts.map((account) => (
-                  <li key={account.id}>
+                  <li key={account.id} className="flex items-stretch">
                     <button
                       type="button"
                       onClick={() => setEditing(account)}
                       aria-label={`Edit ${account.name}`}
-                      className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
+                      className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="flex items-center gap-2 truncate text-sm font-medium">
@@ -144,6 +147,15 @@ export default function AccountsPage() {
                       </div>
                       <Pencil className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setCounting(account)}
+                      aria-label={`Count the money in ${account.name}`}
+                      title="Count what is really there"
+                      className="shrink-0 border-l px-4 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:bg-muted/60 focus-visible:outline-none"
+                    >
+                      <Scale className="size-4" aria-hidden />
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -151,8 +163,11 @@ export default function AccountsPage() {
           </Card>
 
           <p className="mt-3 text-xs text-muted-foreground">
-            Balances update themselves from the expenses and income you assign to each account. If
-            one drifts from your bank, set it here and Eco takes that as the truth from then on.
+            Balances update themselves from the expenses and income you assign to each account.
+            Counted the real money and it does not match? Use{' '}
+            <Scale className="inline size-3" aria-hidden /> to enter what is actually there — the
+            difference is recorded as a transaction, so the money is accounted for rather than
+            quietly written off.
           </p>
         </>
       )}
@@ -163,6 +178,16 @@ export default function AccountsPage() {
         baseCurrency={currency}
         locale={locale}
         onSaved={refreshAll}
+      />
+
+      <ReconcileDialog
+        key={`count-${counting?.id ?? 'none'}`}
+        account={counting}
+        open={counting !== null}
+        onOpenChange={(next) => (next ? undefined : setCounting(null))}
+        locale={locale}
+        onSaved={refreshAll}
+        onClose={() => setCounting(null)}
       />
 
       <AccountDialog
@@ -418,6 +443,208 @@ function AccountDialog({
             )}
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Reconcile an account against money counted by hand.
+ *
+ * The preview is the point. "Set the balance" already exists on the edit
+ * dialog, and it reaches the same number by rewriting the opening figure —
+ * which silently erases the discrepancy. This says what it is about to record,
+ * in words, before it records it: a shortfall becomes spending, a surplus
+ * becomes income, and either way the money is accounted for.
+ */
+function ReconcileDialog({
+  account,
+  open,
+  onOpenChange,
+  locale,
+  onSaved,
+  onClose,
+}: {
+  account: AccountDto | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  locale: string;
+  onSaved: () => void;
+  onClose: () => void;
+}) {
+  const [counted, setCounted] = useState('');
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+  const [result, setResult] = useState<ReconciliationDto | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setCounted('');
+    setNotes('');
+    setDate(new Date().toISOString().slice(0, 10));
+    setFormError(null);
+    setResult(null);
+  }, [open, account?.id]);
+
+  const reconcile = useMutation({
+    mutationFn: (countedMinor: number) =>
+      api.post<ReconciliationDto>(`/accounts/${account!.id}/reconcile`, {
+        actualBalanceMinor: countedMinor,
+        date,
+        notes: notes.trim() || null,
+      }),
+    onSuccess: (data) => {
+      // Deliberately not closed on success: the whole point is to see what was
+      // recorded. Closing would leave the user guessing whether it did anything.
+      setResult(data);
+      onSaved();
+    },
+    onError: (error) =>
+      setFormError(
+        error instanceof ApiError ? error.message : 'Could not reconcile that account.',
+      ),
+  });
+
+  if (!account) return null;
+
+  // Empty is not zero. Treating a blank box as "I counted nothing" would offer
+  // to record the entire balance as spending the moment the dialog opens.
+  const typed = counted.trim();
+  const parsed = typed === '' ? null : Number(typed);
+  const countedMinor =
+    parsed === null || !Number.isFinite(parsed) ? null : toMinorUnits(parsed, account.currency);
+  const difference = countedMinor === null ? null : countedMinor - account.balanceMinor;
+  const money = (minor: number) => formatMoney(minor, account.currency, { locale });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Count {account.name}</DialogTitle>
+          <DialogDescription>
+            Enter what is really there. Eco records the difference as a transaction, so the balance
+            matches reality and the money still shows up in your spending.
+          </DialogDescription>
+        </DialogHeader>
+
+        {result ? (
+          <div className="space-y-4">
+            <div className="rounded-md border bg-muted/40 p-3 text-sm">
+              {result.outcome === 'MATCHED' ? (
+                <p>
+                  Already matched at <span className="font-medium">{money(result.account.balanceMinor)}</span>.
+                  Nothing was recorded.
+                </p>
+              ) : result.outcome === 'SHORTFALL' ? (
+                <p>
+                  Recorded <span className="font-medium">{money(Math.abs(result.differenceMinor))}</span> of
+                  spending under <span className="font-medium">Reconciliation</span>. The balance is
+                  now <span className="font-medium">{money(result.account.balanceMinor)}</span>.
+                </p>
+              ) : (
+                <p>
+                  Recorded <span className="font-medium">{money(result.differenceMinor)}</span> as one-off
+                  income. The balance is now{' '}
+                  <span className="font-medium">{money(result.account.balanceMinor)}</span>.
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button type="button" onClick={onClose}>
+                Done
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              setFormError(null);
+              if (countedMinor === null) {
+                setFormError('Enter the amount you counted.');
+                return;
+              }
+              reconcile.mutate(countedMinor);
+            }}
+            className="space-y-4"
+            noValidate
+          >
+            <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+              <span className="text-muted-foreground">Eco says</span>
+              <span className="tabular font-medium">{money(account.balanceMinor)}</span>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="counted">You counted ({account.currency})</Label>
+              <Input
+                id="counted"
+                inputMode="decimal"
+                autoFocus
+                placeholder="0.00"
+                value={counted}
+                onChange={(event) => setCounted(event.target.value)}
+              />
+            </div>
+
+            {difference !== null && difference !== 0 ? (
+              <p className="rounded-md bg-muted/40 px-3 py-2 text-sm">
+                {difference < 0 ? (
+                  <>
+                    <span className="font-medium">{money(Math.abs(difference))}</span> is missing. It
+                    will be recorded as spending under <span className="font-medium">Reconciliation</span>,
+                    and counts toward your budgets.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-medium">{money(difference)}</span> more than expected. It
+                    will be recorded as one-off income.
+                  </>
+                )}
+              </p>
+            ) : null}
+
+            {difference === 0 ? (
+              <p className="rounded-md bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                That matches what Eco already has. Nothing will be recorded.
+              </p>
+            ) : null}
+
+            <div className="space-y-2">
+              <Label htmlFor="counted-on">Counted on</Label>
+              <Input
+                id="counted-on"
+                type="date"
+                value={date}
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={(event) => setDate(event.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="counted-notes">Note (optional)</Label>
+              <Input
+                id="counted-notes"
+                placeholder="Cash counted at the end of the month"
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+              />
+            </div>
+
+            {formError ? (
+              <p role="alert" className="text-sm text-destructive">
+                {formError}
+              </p>
+            ) : null}
+
+            <DialogFooter>
+              <Button type="submit" disabled={reconcile.isPending || countedMinor === null}>
+                {reconcile.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                {difference === 0 ? 'Check' : 'Record the difference'}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -334,7 +334,55 @@ Crossing 25%, 50%, 75% and 100% raises a notification, once each: a balance
 that hovers around a threshold cannot re-congratulate you every time it
 wobbles across.
 
-## 6. Summary of current gaps
+## 6. When the real money does not match
+
+Balances in Eco are derived: what you said an account held on its opening date,
+plus every expense, receipt, goal contribution and debt payment assigned to it
+since. Nothing is stored as a running total, so an edited or deleted
+transaction corrects the balance instead of leaving it drifted.
+
+Real life still drifts. You buy a coffee in cash and never enter it, and a
+month later the wallet holds less than Eco thinks.
+
+Go to `/accounts` and press the scales icon on the account. Enter what you
+actually counted. Eco shows the difference before it does anything:
+
+- **Counted less than Eco says** — the gap is recorded as an expense under
+  **Reconciliation**, dated the day you counted. It counts toward your budgets
+  and appears in your spending like any other expense, because that is what it
+  is: money that left.
+- **Counted more** — the gap is recorded as one-off income, with no recurring
+  source behind it, so it moves the balance without inflating your run rate or
+  any forward projection.
+- **Counted exactly right** — nothing is recorded. A zero-amount transaction
+  would be a row in the ledger that moved no money.
+
+Either way the balance afterwards equals what you counted.
+
+The **Reconciliation** category appears the first time you use this, not at
+registration, so it does not clutter the expense picker for people who never
+reconcile it. Like the other seeded categories it can be renamed but not
+deleted, because the transactions pointing at it must keep a category.
+
+### Which correction to use
+
+Editing an account and typing a new balance also makes the balance match —
+Eco solves backwards for the opening figure. That is the right tool when the
+*opening figure* was wrong, for example you mistyped it when adding the
+account. It is the wrong tool for a hand count that disagrees, because the
+missing money disappears into history: the balance is right afterwards and
+nothing records that anything was spent, so your spending totals, budgets and
+savings rate all quietly under-report.
+
+Rule of thumb: **wrong starting number → edit the account. Money actually
+moved and nobody wrote it down → count it.**
+
+One limit: you cannot date a count before the account's opening date. A
+correction dated earlier is not counted as a movement since that date, so the
+balance would not land on what you counted. Eco refuses rather than recording
+the money on a day it did not move.
+
+## 7. Summary of current gaps
 
 | Gap | Impact | Workaround |
 |---|---|---|

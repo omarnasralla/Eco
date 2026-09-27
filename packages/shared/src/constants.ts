@@ -37,6 +37,22 @@ export interface SeedCategory {
  * and gray is the honest reading; it is exempt from the chroma floor for that
  * reason, and it is never the only cue because chips carry a name and icon.
  */
+/**
+ * Where a reconciliation puts money that cannot be attributed to anything else.
+ *
+ * Deliberately NOT in DEFAULT_CATEGORIES: it is created the first time an
+ * account is reconciled, not at registration. Seeding it for everyone would put
+ * a category nobody has used yet in every expense picker, and most users never
+ * reconcile at all. It is a system category, so it cannot be deleted once the
+ * rows that reference it exist — only archived.
+ */
+export const RECONCILIATION_CATEGORY: SeedCategory = {
+  slug: 'reconciliation',
+  name: 'Reconciliation',
+  icon: 'scale',
+  color: '#64748b',
+};
+
 export const DEFAULT_CATEGORIES: readonly SeedCategory[] = [
   { slug: 'housing', name: 'Housing', icon: 'home', color: '#0fab76' },
   { slug: 'transportation', name: 'Transportation', icon: 'car', color: '#5a4dbb' },
