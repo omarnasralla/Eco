@@ -19,6 +19,8 @@ import {
   updateExpenseSchema,
   type ExpenseInput,
   type ExpenseQuery,
+  renameMerchantSchema,
+  type RenameMerchantInput,
 } from '@eco/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Audit } from '../../common/decorators/audit.decorator';
@@ -51,6 +53,19 @@ export class ExpensesController {
     @Query('search') search?: string,
   ) {
     return this.expenses.merchantSuggestions(userId, categoryId, search);
+  }
+
+  @Post('merchants/rename')
+  // Above @Get(':id') for the same reason as the merchants list: Nest matches
+  // in declaration order, and a literal segment after a parameterised one is
+  // read as an id.
+  @Audit('UPDATE', 'Expense')
+  @ApiOperation({ summary: 'Rename a merchant across every expense, merging if it exists' })
+  async renameMerchant(
+    @CurrentUser('id') userId: string,
+    @Body(zodBody(renameMerchantSchema)) dto: RenameMerchantInput,
+  ) {
+    return this.expenses.renameMerchant(userId, dto);
   }
 
   @Get(':id')

@@ -13,6 +13,7 @@ import {
   toMajorUnits,
   type ExpenseDto,
   type ExpenseInput,
+  type RenameMerchantResultDto,
 } from '@eco/shared';
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
@@ -553,6 +554,16 @@ function ExpenseDialog({
                 <option key={name} value={name} />
               ))}
             </datalist>
+            {/* Only when editing, and only once the row has a merchant: this
+                rewrites every expense that shares the name, which is a
+                different act from correcting this one row. */}
+            {expense && (expense.merchant ?? '').trim() ? (
+              <RenameMerchantControl
+                merchant={expense.merchant!}
+                categories={categories}
+                onDone={onSaved}
+              />
+            ) : null}
           </div>
 
           {/* Subscriptions and standing bills. Flagging one keeps it out of the
@@ -704,5 +715,113 @@ export default function ExpensesPage() {
     <Suspense fallback={<Skeleton className="h-96 w-full" />}>
       <ExpensesContent />
     </Suspense>
+  );
+}
+
+/**
+ * Rename a merchant across every expense that uses it.
+ *
+ * Spelling stopped being the user's choice the moment capture became
+ * automatic: a shop typed as "Nwateh" arrives from the bank as "Nawateh", and
+ * the same till produces "Motor Sports" and "MotorSports". Each spelling is a
+ * separate merchant to every report and to the inference that decides a
+ * captured expense's category — and until now the only way to reconcile them
+ * was to edit the database by hand, which is exactly what happened twice in
+ * one day.
+ *
+ * Renaming onto a name that already exists merges the two. That is the normal
+ * case here, not an edge one, so the result says plainly which it was.
+ */
+function RenameMerchantControl({
+  merchant,
+  categories,
+  onDone,
+}: {
+  merchant: string;
+  categories: Array<{ id: string; name: string }>;
+  onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [to, setTo] = useState(merchant);
+  const [categoryId, setCategoryId] = useState<string>('keep');
+  const [error, setError] = useState<string | null>(null);
+
+  const rename = useMutation({
+    mutationFn: () =>
+      api.post<RenameMerchantResultDto>('/expenses/merchants/rename', {
+        from: merchant,
+        to: to.trim(),
+        ...(categoryId !== 'keep' ? { categoryId } : {}),
+      }),
+    onSuccess: onDone,
+    onError: (e) =>
+      setError(e instanceof ApiError ? e.message : 'Could not rename that merchant.'),
+  });
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+      >
+        Rename “{merchant}” everywhere
+      </button>
+    );
+  }
+
+  const target = to.trim();
+  const unchanged = target.toLowerCase() === merchant.toLowerCase();
+
+  return (
+    <div className="space-y-2 rounded-md border bg-muted/40 p-3">
+      <p className="text-xs text-muted-foreground">
+        Renames every expense using “{merchant}”. If the new name already exists, the two are
+        merged.
+      </p>
+      <Input
+        value={to}
+        onChange={(event) => setTo(event.target.value)}
+        placeholder="New name"
+        aria-label="New merchant name"
+      />
+      <Select value={categoryId} onValueChange={setCategoryId}>
+        <SelectTrigger aria-label="Category to apply">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="keep">Keep existing categories</SelectItem>
+          {categories.map((category) => (
+            <SelectItem key={category.id} value={category.id}>
+              File all under {category.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+      <div className="flex gap-2">
+        {/* Not a submit: this sits inside the expense form, and a submit here
+            would save the expense instead of renaming anything. */}
+        <Button
+          type="button"
+          size="sm"
+          disabled={rename.isPending || !target || unchanged}
+          onClick={() => {
+            setError(null);
+            rename.mutate();
+          }}
+        >
+          {rename.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+          Rename everywhere
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+      </div>
+    </div>
   );
 }

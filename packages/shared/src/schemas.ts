@@ -218,6 +218,31 @@ export const expenseQuerySchema = z.object({
   order: z.enum(['asc', 'desc']).default('desc'),
 });
 
+/**
+ * Renaming a merchant across every expense that uses it.
+ *
+ * Card terminals and bank alerts spell a shop however they like — "Nwateh"
+ * typed by hand, "Nawateh" from the SMS, "Motor Sports" and "MotorSports" from
+ * the same till. Each spelling is a separate merchant to every report and to
+ * category inference, and there was no way to reconcile them without editing
+ * the database by hand.
+ *
+ * Renaming onto a name that already exists is a merge, which is the common
+ * case rather than an edge one.
+ */
+export const renameMerchantSchema = z.object({
+  from: z.string().trim().min(1).max(160),
+  to: z.string().trim().min(1).max(160),
+  /**
+   * Optionally file every affected row under one category at the same time.
+   * Two spellings often carry two categories, and a merge that leaves the
+   * merchant split across both has only half-solved the problem.
+   */
+  categoryId: uuid.optional(),
+});
+
+export type RenameMerchantInput = z.infer<typeof renameMerchantSchema>;
+
 /* ── Debts ────────────────────────────────────────────────── */
 
 export const debtSchema = z.object({

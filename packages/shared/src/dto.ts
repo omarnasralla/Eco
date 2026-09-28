@@ -132,6 +132,18 @@ export interface ExpenseDto {
   updatedAt: string;
 }
 
+/** What a merchant rename actually changed. */
+export interface RenameMerchantResultDto {
+  /** How many expenses now carry the new name. */
+  renamed: number;
+  /** True when the target name was already in use, so this merged two. */
+  merged: boolean;
+  /** The name everything now shares. */
+  merchant: string;
+  /** Set when a category was applied to every affected row. */
+  categoryName: string | null;
+}
+
 export interface DebtDto {
   id: string;
   name: string;

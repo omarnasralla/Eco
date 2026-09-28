@@ -1,6 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { ExpenseDto, ExpenseInput, ExpenseQuery, Paginated } from '@eco/shared';
+import type {
+  ExpenseDto,
+  ExpenseInput,
+  ExpenseQuery,
+  Paginated,
+  RenameMerchantInput,
+  RenameMerchantResultDto,
+} from '@eco/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { CurrencyService } from '../currency/currency.service';
@@ -298,6 +305,83 @@ export class ExpensesService {
 
     await this.redis.invalidateUser(userId);
     return toDto(expense);
+  }
+
+  /**
+   * Rename a merchant everywhere it appears, optionally recategorising as it goes.
+   *
+   * Spelling is not something the user controls once capture is automatic: a
+   * shop typed as "Nwateh" arrives from the bank as "Nawateh", and the two are
+   * separate merchants to every report and to the category inference that
+   * makes capture silent. Reconciling them previously meant editing the
+   * database by hand.
+   *
+   * Renaming onto an existing name merges the two, which is the normal case.
+   * Matching is case-insensitive but exact — no prefix cleverness here, since
+   * this rewrites rows in bulk and the user has named both sides explicitly.
+   *
+   * Soft-deleted rows are left alone: they are not in any report, and
+   * rewriting history the user has already deleted is not this feature's job.
+   */
+  async renameMerchant(
+    userId: string,
+    input: RenameMerchantInput,
+  ): Promise<RenameMerchantResultDto> {
+    const to = input.to.trim();
+    if (input.categoryId) await this.assertCategoryOwned(userId, input.categoryId);
+
+    // Whether this is a merge is decided before the write, because afterwards
+    // the two are indistinguishable.
+    const existing = await this.prisma.expense.count({
+      where: {
+        userId,
+        deletedAt: null,
+        merchant: { equals: to, mode: 'insensitive' },
+        NOT: { merchant: { equals: input.from.trim(), mode: 'insensitive' } },
+      },
+    });
+
+    const { count } = await this.prisma.expense.updateMany({
+      where: {
+        userId,
+        deletedAt: null,
+        merchant: { equals: input.from.trim(), mode: 'insensitive' },
+      },
+      data: {
+        merchant: to,
+        ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+        // A row a human has just deliberately renamed is a row a human has
+        // looked at, so it is no longer waiting on review.
+        needsReview: false,
+      },
+    });
+
+    if (count === 0) throw new NotFoundException(`No expenses found for "${input.from}"`);
+
+    // When a category was given, apply it to the rows that already carried the
+    // target name too — otherwise a merge leaves the merchant split across two
+    // categories, which is the state this was meant to end.
+    if (input.categoryId && existing > 0) {
+      await this.prisma.expense.updateMany({
+        where: { userId, deletedAt: null, merchant: { equals: to, mode: 'insensitive' } },
+        data: { categoryId: input.categoryId, needsReview: false },
+      });
+    }
+
+    const category = input.categoryId
+      ? await this.prisma.category.findUnique({
+          where: { id: input.categoryId },
+          select: { name: true },
+        })
+      : null;
+
+    await this.redis.invalidateUser(userId);
+    return {
+      renamed: count,
+      merged: existing > 0,
+      merchant: to,
+      categoryName: category?.name ?? null,
+    };
   }
 
   async remove(userId: string, id: string): Promise<void> {
