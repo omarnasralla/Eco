@@ -357,6 +357,10 @@ model FinancialAccount {
   /// an edited or deleted transaction cannot leave the figure drifted.
   openingBalanceMinor BigInt    @default(0)
   openingBalanceDate  DateTime  @default(now()) @db.Date
+  /// Last four digits of every card spent from this account. Bank alerts name
+  /// the card and never the account, so this is the only join between a
+  /// message and the money it moved — and one balance can have several cards.
+  cardsLast4          String[]
   isPrimary           Boolean   @default(false)
   /// Reserved for bank aggregation; null while the account is manual.
   providerId          String?   @db.VarChar(60)

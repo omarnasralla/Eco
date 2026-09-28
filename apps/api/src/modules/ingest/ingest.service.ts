@@ -1,4 +1,10 @@
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type {
@@ -14,6 +20,7 @@ import { CurrencyService } from '../currency/currency.service';
 import { detectCurrency, parseAmountToMinor } from '../../common/utils/parse-amount';
 import { toNumber } from '../../common/utils/money';
 import { fromIsoDate, todayIso } from '../../common/utils/dates';
+import { parseTransactionSms } from './sms-parser';
 
 /** Where a tap lands when its merchant has never been categorised before. */
 const FALLBACK_CATEGORY_SLUG = 'miscellaneous';
@@ -89,8 +96,14 @@ export class IngestService {
     userId: string,
     userCurrency: string,
     input: IngestExpenseInput,
+    /**
+     * The account, when the caller has already identified it. A bank alert
+     * names the card, which maps to an account exactly; guessing again from
+     * the card's display name would be strictly worse.
+     */
+    resolvedAccount?: { id: string; name: string; currency: string } | null,
   ): Promise<IngestResultDto> {
-    const account = await this.matchAccount(userId, input.card);
+    const account = resolvedAccount ?? (await this.matchAccount(userId, input.card));
     // Currency, most trustworthy source first. The middle one matters: the
     // phone sends the amount as it was displayed ("SAR 3.00"), and that text is
     // the only place a foreign currency is named. Defaulting straight to the
@@ -213,6 +226,151 @@ export class IngestService {
         accountName: existing.account?.name ?? null,
       };
     }
+  }
+
+  /**
+   * Record a bank's SMS alert.
+   *
+   * The phone forwards the message unchanged; everything is read here. That is
+   * the point of the design — an alert covers online and in-app purchases the
+   * Wallet tap trigger cannot see, and the parsing sits where it can be tested
+   * against real messages rather than in a text action on a phone.
+   *
+   * The message itself is the idempotency key. Two purchases differ by at
+   * least their timestamp, so the same text arriving twice is the same event
+   * and is answered with the row already recorded.
+   */
+  async captureSms(
+    userId: string,
+    userCurrency: string,
+    text: string,
+  ): Promise<IngestResultDto & { kind: string }> {
+    const parsed = parseTransactionSms(text);
+    if (!parsed) {
+      // Refused, never half-read. A message shape nobody has seen might be a
+      // refund, a decline, or an advert; guessing at the amount inside it is
+      // how money moves in the wrong direction.
+      throw new BadRequestException(
+        'That message was not recognised as a transaction. Nothing was recorded.',
+      );
+    }
+
+    // The message text keyed to this user — stable across retries, different
+    // for every genuine transaction.
+    const reference = createHash('sha256')
+      .update(`${userId}:${text.trim()}`)
+      .digest('hex');
+
+    const account = await this.accountForCard(userId, parsed.cardLast4);
+
+    if (parsed.kind === 'IGNORE') {
+      this.logger.log(
+        `capture sms ignored user=${userId} reason=internal-transfer card=${parsed.cardLast4 ?? 'none'}`,
+      );
+      return {
+        kind: parsed.kind,
+        expenseId: '',
+        duplicate: false,
+        amountMinor: parsed.amountMinor,
+        currency: parsed.currency,
+        merchant: parsed.merchant,
+        categoryName: '—',
+        needsReview: false,
+        accountName: account?.name ?? null,
+      };
+    }
+
+    if (parsed.kind === 'RECEIVE') {
+      const existing = await this.prisma.incomeReceipt.findFirst({
+        where: { userId, notes: reference },
+      });
+      if (existing) {
+        return {
+          kind: parsed.kind,
+          expenseId: existing.id,
+          duplicate: true,
+          amountMinor: toNumber(existing.amountMinor),
+          currency: existing.currency,
+          merchant: existing.name ?? parsed.merchant,
+          categoryName: '—',
+          needsReview: false,
+          accountName: account?.name ?? null,
+        };
+      }
+
+      const receipt = await this.prisma.incomeReceipt.create({
+        data: {
+          userId,
+          incomeSourceId: null,
+          name: parsed.merchant,
+          accountId: account?.id ?? null,
+          amountMinor: BigInt(parsed.amountMinor),
+          currency: parsed.currency,
+          baseAmountMinor: BigInt(
+            await this.currency.convert(
+              parsed.amountMinor,
+              parsed.currency,
+              userCurrency,
+              parsed.date,
+            ),
+          ),
+          date: fromIsoDate(parsed.date),
+          // Receipts have no externalRef column, so the key lives here. Ugly,
+          // and worth a column of its own the moment a second thing needs one.
+          notes: reference,
+        },
+      });
+      this.logger.log(`capture sms received user=${userId} currency=${parsed.currency}`);
+      return {
+        kind: parsed.kind,
+        expenseId: receipt.id,
+        duplicate: false,
+        amountMinor: parsed.amountMinor,
+        currency: parsed.currency,
+        merchant: parsed.merchant,
+        categoryName: '—',
+        needsReview: false,
+        accountName: account?.name ?? null,
+      };
+    }
+
+    const result = await this.capture(
+      userId,
+      userCurrency,
+      {
+        amountMinor: parsed.amountMinor,
+        currency: parsed.currency,
+        merchant: parsed.merchant,
+        date: parsed.date,
+        reference,
+      },
+      account,
+    );
+    return { ...result, kind: parsed.kind };
+  }
+
+  /** The account holding this card, or the primary one when the card is unknown. */
+  private async accountForCard(
+    userId: string,
+    cardLast4: string | null,
+  ): Promise<{ id: string; name: string; currency: string } | null> {
+    const accounts = await this.prisma.financialAccount.findMany({
+      where: { userId, deletedAt: null },
+      select: { id: true, name: true, currency: true, isPrimary: true, cardsLast4: true },
+    });
+    if (accounts.length === 0) return null;
+
+    if (cardLast4) {
+      const owning = accounts.filter((a) => a.cardsLast4.includes(cardLast4));
+      // Exactly one, or none. Two accounts claiming the same card is a
+      // configuration mistake, and picking one at random would file the
+      // spending against the wrong balance silently.
+      if (owning.length === 1) return owning[0]!;
+      if (owning.length > 1) {
+        this.logger.warn(`card ${cardLast4} claimed by ${owning.length} accounts for ${userId}`);
+      }
+    }
+    return accounts.find((a) => a.isPrimary) ?? null;
   }
 
   /**

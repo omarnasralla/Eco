@@ -516,6 +516,20 @@ export const ingestExpenseSchema = z
     path: ['amount'],
   });
 
+/**
+ * A bank's SMS alert, forwarded unchanged.
+ *
+ * Deliberately just the text. Everything — amount, merchant, card, direction,
+ * and whether it is a transaction at all — is read server side, where it can
+ * be tested against real messages instead of assembled by text actions on a
+ * phone that fail silently.
+ */
+export const ingestSmsSchema = z.object({
+  text: z.string().trim().min(1).max(2000),
+});
+
+export type IngestSmsInput = z.infer<typeof ingestSmsSchema>;
+
 /** Naming one, so a lost phone can be revoked without cutting off the others. */
 export const ingestTokenSchema = z.object({
   label: z.string().trim().min(1).max(80),

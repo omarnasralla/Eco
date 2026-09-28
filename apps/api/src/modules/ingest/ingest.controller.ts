@@ -14,8 +14,10 @@ import { Throttle } from '@nestjs/throttler';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   ingestExpenseSchema,
+  ingestSmsSchema,
   ingestTokenSchema,
   type IngestExpenseInput,
+  type IngestSmsInput,
   type IngestTokenInput,
 } from '@eco/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -44,6 +46,26 @@ export class IngestController {
     @Body(zodBody(ingestTokenSchema)) dto: IngestTokenInput,
   ) {
     return this.ingest.createToken(userId, dto.label);
+  }
+
+  /**
+   * Forward a bank SMS alert.
+   *
+   * Covers what the Wallet tap automation cannot: online and in-app purchases,
+   * refunds, and money sent to or received from a person. Same token, same
+   * rate limit, and an unrecognised message is refused rather than guessed at.
+   */
+  @Public()
+  @UseGuards(IngestTokenGuard)
+  @Throttle({ default: { limit: 120, ttl: 3_600_000 } })
+  @Post('sms')
+  @Audit('CREATE', 'Expense')
+  @ApiOperation({ summary: 'Record a bank SMS alert (capture token auth)' })
+  async captureSms(
+    @CurrentUser() user: { id: string; currency: string },
+    @Body(zodBody(ingestSmsSchema)) dto: IngestSmsInput,
+  ) {
+    return this.ingest.captureSms(user.id, user.currency, dto.text);
   }
 
   @Delete('tokens/:id')
