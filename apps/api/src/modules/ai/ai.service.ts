@@ -27,6 +27,8 @@ import { todayIso } from '../../common/utils/dates';
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
+  /** Whether the optional Python service is currently unreachable. */
+  private aiServiceDown = false;
   private readonly serviceUrl: string;
   private readonly serviceToken: string;
 
@@ -96,11 +98,10 @@ export class AiService {
           },
         });
 
+        this.noteAiServiceUp();
         return remote;
       } catch (error) {
-        this.logger.warn(
-          `AI service forecast failed (${(error as Error).message}); using the local model`,
-        );
+        this.noteAiServiceDown(error as Error);
 
         const seasonal = seasonalityIndex(monthlyTotals(transactions)).map((s) => s.indexVsAverage);
         const local = forecastCashFlow({
@@ -131,6 +132,35 @@ export class AiService {
   }
 
   /** Learned spending patterns, cached because the analysis is not cheap. */
+  /**
+   * Report the AI service being unreachable once, not on every request.
+   *
+   * The service is optional — the local forecaster covers it, and the response
+   * says which model produced the number — so a machine that does not run it
+   * is a supported state, not a fault. Warning on every call turned that into
+   * 26 identical lines in a log we have twice had to read carefully to find a
+   * real failure, and noise like that is how the real one gets missed.
+   *
+   * So: loud the first time, quiet after, and loud again when it recovers.
+   */
+  private noteAiServiceDown(error: Error): void {
+    if (this.aiServiceDown) {
+      this.logger.debug(`AI service still unreachable (${error.message}); using the local model`);
+      return;
+    }
+    this.aiServiceDown = true;
+    this.logger.warn(
+      `AI service unreachable (${error.message}); using the local model. ` +
+        'Further occurrences are logged at debug until it recovers.',
+    );
+  }
+
+  private noteAiServiceUp(): void {
+    if (!this.aiServiceDown) return;
+    this.aiServiceDown = false;
+    this.logger.log('AI service reachable again; using the full forecast model');
+  }
+
   async patterns(userId: string, userCurrency: string) {
     return this.redis.remember(
       this.redis.key(userId, 'patterns'),
