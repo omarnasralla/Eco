@@ -3,9 +3,21 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
-import { Copy, Download, Loader2, LogOut, Moon, ShieldCheck, Smartphone, Sun, Trash2 } from 'lucide-react';
+import {
+  Bell,
+  Copy,
+  Download,
+  Loader2,
+  LogOut,
+  Moon,
+  ShieldCheck,
+  Smartphone,
+  Sun,
+  Trash2,
+} from 'lucide-react';
 import { CURRENCIES, type CreatedIngestTokenDto, type IngestTokenDto } from '@eco/shared';
 import { api } from '@/lib/api-client';
+import { isInstalled, pushState, subscribeToPush, type PushState } from '@/lib/push';
 import { useAuth } from '@/lib/auth-provider';
 import { PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -146,6 +158,8 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        <NotificationsCard />
 
         <AutomaticExpensesCard />
 
@@ -398,6 +412,109 @@ function AutomaticExpensesCard() {
           A token can only add expenses — it cannot read your balances, move money, or sign in.
           Revoke one if you lose the phone holding it.
         </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Turning on push for this device.
+ *
+ * The awkward case is the common one: on an iPhone, push works only once the
+ * site has been added to the Home Screen, and there is no way to ask for it
+ * from a Safari tab. So rather than showing a button that cannot work, this
+ * says what to do — an unexplained disabled control is how people conclude the
+ * feature is broken.
+ */
+function NotificationsCard() {
+  const [state, setState] = useState<PushState>('default');
+  const [installed, setInstalled] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setState(pushState());
+    setInstalled(isInstalled());
+  }, []);
+
+  const enable = useMutation({
+    mutationFn: subscribeToPush,
+    onSuccess: (next) => {
+      setState(next);
+      if (next === 'denied') {
+        setError('Notifications are blocked for this site. Turn them back on in your settings.');
+      }
+    },
+    onError: (e) =>
+      setError(e instanceof Error ? e.message : 'Could not turn on notifications.'),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Bell className="size-4 text-primary" aria-hidden />
+          Notifications
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Eco tells you when an expense could not be recorded, when captured expenses are waiting
+          for a category, and when a bill or budget needs attention. It never notifies you about an
+          expense that recorded correctly — your bank already does that.
+        </p>
+
+        {state === 'granted' ? (
+          <div className="flex items-center gap-2">
+            <Badge variant="success">on</Badge>
+            <span className="text-sm text-muted-foreground">
+              This device will receive notifications.
+            </span>
+          </div>
+        ) : state === 'needs-install' ? (
+          <div className="rounded-md border bg-muted/40 p-3 text-sm">
+            <p className="font-medium">Add Eco to your Home Screen first</p>
+            <p className="mt-1 text-muted-foreground">
+              Apple only allows notifications for a web app on the Home Screen, not from a Safari
+              tab. Tap <span className="font-medium">Share</span> →{' '}
+              <span className="font-medium">Add to Home Screen</span>, open Eco from the new icon,
+              then come back here.
+            </p>
+          </div>
+        ) : state === 'unsupported' ? (
+          <p className="text-sm text-muted-foreground">
+            This browser cannot receive push notifications.
+          </p>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setError(null);
+              enable.mutate();
+            }}
+            disabled={enable.isPending}
+          >
+            {enable.isPending ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <Bell className="size-4" aria-hidden />
+            )}
+            Turn on notifications
+          </Button>
+        )}
+
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+
+        {!installed && state !== 'needs-install' ? (
+          <p className="text-xs text-muted-foreground">
+            Adding Eco to your Home Screen makes notifications more reliable.
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   );

@@ -17,6 +17,7 @@ import { DEFAULT_CATEGORIES } from '@eco/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { CurrencyService } from '../currency/currency.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { detectCurrency, parseAmountToMinor } from '../../common/utils/parse-amount';
 import { toNumber } from '../../common/utils/money';
 import { fromIsoDate, todayIso } from '../../common/utils/dates';
@@ -36,6 +37,7 @@ export class IngestService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly currency: CurrencyService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ── Tokens ───────────────────────────────────────────────────────────────
@@ -207,6 +209,13 @@ export class IngestService {
         existing.date.getTime() === fromIsoDate(date).getTime();
       if (!samePurchase) {
         trace('rejected', 'reason=reference-reused-for-different-purchase');
+        void this.notifications
+          .captureFailed(
+            userId,
+            'A purchase was rejected as a duplicate',
+            'Your shortcut is sending the same reference for every transaction.',
+          )
+          .catch((e: Error) => this.logger.warn(`Could not notify: ${e.message}`));
         throw new ConflictException(
           `Reference "${data.externalRef}" was already used for a different purchase ` +
             `(${existing.merchant ?? 'unknown'}). Your shortcut is sending the same reference ` +
@@ -247,6 +256,13 @@ export class IngestService {
   ): Promise<IngestResultDto & { kind: string }> {
     const parsed = parseTransactionSms(text);
     if (!parsed) {
+      // Notified before throwing. The phone shows nothing when a shortcut gets
+      // a 400, so without this the message is lost in silence — which is
+      // exactly how a real purchase went missing for two days.
+      void this.notifications
+        .captureUnknownFormat(userId, text)
+        .catch((e: Error) => this.logger.warn(`Could not notify: ${e.message}`));
+
       // Refused, never half-read. A message shape nobody has seen might be a
       // refund, a decline, or an advert; guessing at the amount inside it is
       // how money moves in the wrong direction.

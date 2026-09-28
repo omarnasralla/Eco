@@ -50,13 +50,27 @@ export class NotificationsController {
     return this.notifications.updatePreferences(userId, dto);
   }
 
+  @Get('push-key')
+  @ApiOperation({ summary: "The VAPID public key a browser needs to subscribe" })
+  async pushKey() {
+    // Public by design — it is half of a keypair and identifies the server to
+    // the push service. The private half never leaves the API.
+    return { publicKey: this.notifications.pushPublicKey() };
+  }
+
   @Post('push-tokens')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Register a device for push notifications' })
   async registerPushToken(
     @CurrentUser('id') userId: string,
     @Body(zodBody(registerPushTokenSchema))
-    dto: { token: string; platform: 'IOS' | 'ANDROID' | 'WEB'; deviceName?: string },
+    dto: {
+      token: string;
+      platform: 'IOS' | 'ANDROID' | 'WEB';
+      deviceName?: string;
+      p256dh?: string;
+      auth?: string;
+    },
   ) {
     await this.notifications.registerPushToken(userId, dto);
   }

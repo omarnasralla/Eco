@@ -90,6 +90,12 @@ export const NOTIFICATION_TYPES = [
   'GOAL_ACHIEVED',
   'AI_INSIGHT',
   'SECURITY_ALERT',
+  /** An automatic capture could not be recorded — the failure used to be silent. */
+  'CAPTURE_FAILED',
+  /** Captured expenses are waiting for a category to be confirmed. */
+  'NEEDS_REVIEW',
+  /** A bank message arrived in a shape the parser has never seen. */
+  'CAPTURE_UNKNOWN',
   'SYSTEM',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

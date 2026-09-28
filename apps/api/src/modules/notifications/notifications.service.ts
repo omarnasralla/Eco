@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import webpush from 'web-push';
 import type {
   NotificationDto,
   NotificationPreferences,
@@ -25,14 +27,35 @@ export interface CreateNotificationInput {
 }
 
 @Injectable()
-export class NotificationsService {
+export class NotificationsService implements OnModuleInit {
   private readonly logger = new Logger(NotificationsService.name);
+  /** False when no VAPID keys are configured; pushes are then skipped quietly. */
+  private pushReady = false;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly mail: MailService,
+    private readonly config: ConfigService,
   ) {}
+
+  onModuleInit(): void {
+    const publicKey = this.config.get<string>('push.publicKey');
+    const privateKey = this.config.get<string>('push.privateKey');
+    if (!publicKey || !privateKey) {
+      // Not an error. A machine with no keys configured simply does not push,
+      // and everything else about a notification still works.
+      this.logger.warn('No VAPID keys configured — push notifications are disabled');
+      return;
+    }
+    webpush.setVapidDetails(
+      this.config.getOrThrow<string>('push.subject'),
+      publicKey,
+      privateKey,
+    );
+    this.pushReady = true;
+    this.logger.log('Web push configured');
+  }
 
   async create(userId: string, input: CreateNotificationInput): Promise<NotificationDto | null> {
     const preferences = await this.getPreferences(userId);
@@ -77,7 +100,7 @@ export class NotificationsService {
     }
 
     if (preferences.channels.includes('PUSH') && !this.isQuietHours(preferences)) {
-      await this.sendPush(userId, input.title, input.body);
+      await this.sendPush(userId, input.title, input.body, input.actionUrl);
     }
 
     return this.toDto(notification);
@@ -194,9 +217,20 @@ export class NotificationsService {
     };
   }
 
+  /** The VAPID public key, or null when push is not configured. */
+  pushPublicKey(): string | null {
+    return this.config.get<string>('push.publicKey') ?? null;
+  }
+
   async registerPushToken(
     userId: string,
-    input: { token: string; platform: 'IOS' | 'ANDROID' | 'WEB'; deviceName?: string },
+    input: {
+      token: string;
+      platform: 'IOS' | 'ANDROID' | 'WEB';
+      deviceName?: string;
+      p256dh?: string;
+      auth?: string;
+    },
   ): Promise<void> {
     await this.prisma.pushToken.upsert({
       where: { token: input.token },
@@ -205,11 +239,40 @@ export class NotificationsService {
         token: input.token,
         platform: input.platform,
         deviceName: input.deviceName ?? null,
+        p256dh: input.p256dh ?? null,
+        auth: input.auth ?? null,
       },
       // A device that changes hands should follow the new owner, not keep
       // pushing another person's balances to it.
-      update: { userId, lastUsedAt: new Date() },
+      // The keys are refreshed too: a browser can re-subscribe to the same
+      // endpoint with new ones, and stale keys fail encryption silently.
+      update: {
+        userId,
+        lastUsedAt: new Date(),
+        ...(input.p256dh ? { p256dh: input.p256dh } : {}),
+        ...(input.auth ? { auth: input.auth } : {}),
+      },
     });
+
+    // Registering a device IS the request to be pushed to. Without this the
+    // channel defaults to [IN_APP, EMAIL] and every push is skipped — a user
+    // grants permission, sees a confirmation, and then never hears anything,
+    // with nothing anywhere saying why.
+    const preferences = await this.prisma.notificationPreference.findUnique({
+      where: { userId },
+      select: { channels: true },
+    });
+    if (!preferences) {
+      await this.prisma.notificationPreference.create({
+        data: { userId, channels: ['IN_APP', 'EMAIL', 'PUSH'] },
+      });
+    } else if (!preferences.channels.includes('PUSH')) {
+      await this.prisma.notificationPreference.update({
+        where: { userId },
+        data: { channels: [...preferences.channels, 'PUSH'] },
+      });
+    }
+    await this.redis.invalidateUser(userId);
   }
 
   private isTypeEnabled(type: NotificationType, prefs: NotificationPreferences): boolean {
@@ -253,16 +316,89 @@ export class NotificationsService {
   }
 
   /**
-   * Push delivery. The transport (APNs / FCM / Web Push) is deliberately behind
-   * this one method: when the React Native app ships, only this body changes.
+   * Push delivery.
+   *
+   * Web Push is implemented; APNs and FCM are still ahead of us, and a token
+   * for either is skipped rather than failing the send — one unsupported
+   * device must not stop the others being notified.
+   *
+   * On iOS this reaches only a site added to the Home Screen: Apple does not
+   * permit push from a Safari tab. Nothing here can change that, and it is
+   * worth knowing when a user swears notifications are broken.
    */
-  private async sendPush(userId: string, title: string, body: string): Promise<void> {
+  private async sendPush(userId: string, title: string, body: string, url?: string | null) {
+    if (!this.pushReady) return;
+
     const tokens = await this.prisma.pushToken.findMany({ where: { userId } });
     if (tokens.length === 0) return;
 
-    this.logger.debug(`Would push "${title}" to ${tokens.length} device(s) for user ${userId}`);
-    // TODO(phase-3): dispatch through FCM/APNs and prune tokens the provider
-    // reports as unregistered.
+    const payload = JSON.stringify({ title, body, url: url ?? '/eco/app' });
+
+    await Promise.all(
+      tokens.map(async (token) => {
+        if (token.platform !== 'WEB' || !token.p256dh || !token.auth) return;
+        try {
+          await webpush.sendNotification(
+            {
+              endpoint: token.token,
+              keys: { p256dh: token.p256dh, auth: token.auth },
+            },
+            payload,
+          );
+        } catch (error) {
+          const status = (error as { statusCode?: number }).statusCode;
+          // 404 and 410 are the push service saying this subscription is dead
+          // — the app was deleted, or the browser dropped it. Keeping it means
+          // failing on every future send forever, so it goes.
+          if (status === 404 || status === 410) {
+            await this.prisma.pushToken.delete({ where: { id: token.id } }).catch(() => undefined);
+            this.logger.log(`Pruned expired push subscription for user ${userId}`);
+            return;
+          }
+          this.logger.warn(`Push failed for user ${userId}: ${(error as Error).message}`);
+        }
+      }),
+    );
+  }
+
+  /**
+   * Alert that an automatic capture did not make it in.
+   *
+   * This exists because every failure of that kind was silent. A bank alert
+   * that could not be parsed, a token that had been revoked, a reference
+   * collision — all of them answered the phone and left no trace the user
+   * would ever see, and a real purchase went missing for two days as a result.
+   *
+   * Deduped per day per reason: a shortcut misconfigured on Monday should say
+   * so once, not once per purchase.
+   */
+  async captureFailed(userId: string, reason: string, detail?: string): Promise<void> {
+    await this.create(userId, {
+      type: 'CAPTURE_FAILED',
+      title: 'An expense could not be recorded',
+      body: detail
+        ? `${reason}. ${detail}`
+        : `${reason}. Tap to add it by hand, or check the shortcut on your phone.`,
+      actionUrl: '/eco/app/expenses',
+      dedupeKey: `capture-failed:${reason}:${new Date().toISOString().slice(0, 10)}`,
+    });
+  }
+
+  /**
+   * Alert that a message arrived in a shape the parser has never seen.
+   *
+   * Distinct from a failure the user caused: this one means a bank changed its
+   * wording and the parser needs a new pattern. The message itself is included
+   * so it can be forwarded without hunting through a phone for it.
+   */
+  async captureUnknownFormat(userId: string, text: string): Promise<void> {
+    await this.create(userId, {
+      type: 'CAPTURE_UNKNOWN',
+      title: 'A bank message was not recognised',
+      body: `Nothing was recorded for: "${text.slice(0, 120)}"`,
+      actionUrl: '/eco/app/expenses',
+      dedupeKey: `capture-unknown:${new Date().toISOString().slice(0, 10)}`,
+    });
   }
 
   private toDto(notification: {
@@ -341,6 +477,46 @@ export class NotificationsService {
   }
 
   /** Drops read notifications older than 90 days. */
+  /**
+   * One daily summary of captured expenses whose category was guessed.
+   *
+   * Batched on purpose. A push per purchase would arrive alongside the bank's
+   * own SMS and say less than it does — two buzzes for one coffee is how a
+   * person learns to swipe notifications away without reading them, which
+   * costs the alerts that matter.
+   *
+   * Evening rather than morning: the point is to catch the day's spending once
+   * it has happened, and quiet hours still apply on top.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_8PM)
+  async remindUnreviewedCaptures(): Promise<void> {
+    if (!(await this.redis.acquireLock('notification-review-digest', 600))) return;
+    try {
+      const pending = await this.prisma.expense.groupBy({
+        by: ['userId'],
+        where: { needsReview: true, deletedAt: null },
+        _count: { _all: true },
+      });
+
+      for (const row of pending) {
+        const count = row._count._all;
+        await this.create(row.userId, {
+          type: 'NEEDS_REVIEW',
+          title: `${count} expense${count === 1 ? '' : 's'} need${count === 1 ? 's' : ''} a category`,
+          body:
+            count === 1
+              ? 'One captured expense was filed under a guess. Setting it teaches every future one.'
+              : `${count} captured expenses were filed under a guess. Setting each one teaches every future purchase at that merchant.`,
+          actionUrl: '/eco/app/expenses',
+          // Once a day at most, however many times this runs.
+          dedupeKey: `needs-review:${new Date().toISOString().slice(0, 10)}`,
+        });
+      }
+    } finally {
+      await this.redis.releaseLock('notification-review-digest');
+    }
+  }
+
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async pruneOld(): Promise<void> {
     if (!(await this.redis.acquireLock('notification-prune', 600))) return;

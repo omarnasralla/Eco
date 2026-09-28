@@ -27,6 +27,11 @@ export const configuration = (env: Env) => ({
     audience: env.JWT_AUDIENCE,
   },
 
+  push: {
+    publicKey: env.VAPID_PUBLIC_KEY,
+    privateKey: env.VAPID_PRIVATE_KEY,
+    subject: env.VAPID_SUBJECT ?? 'mailto:admin@example.com',
+  },
   encryption: {
     key: Buffer.from(env.ENCRYPTION_KEY, 'base64'),
     version: env.ENCRYPTION_KEY_VERSION,

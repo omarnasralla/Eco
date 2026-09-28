@@ -110,6 +110,12 @@ enum NotificationType {
   AI_INSIGHT
   SECURITY_ALERT
   SYSTEM
+  /// A bank alert arrived and could not be recorded.
+  CAPTURE_FAILED
+  /// Captured expenses are waiting for someone to confirm their category.
+  NEEDS_REVIEW
+  /// A message whose format the parser has never seen.
+  CAPTURE_UNKNOWN
 }
 
 enum RecommendationKind {
@@ -910,7 +916,12 @@ model NotificationPreference {
 model PushToken {
   id         String         @id @default(uuid()) @db.Uuid
   userId     String         @db.Uuid
+  /// The device token, or for web push the subscription endpoint URL.
   token      String         @unique
+  /// Web Push only: the two keys the browser generates for payload
+  /// encryption. Null on iOS and Android, which carry a plain device token.
+  p256dh     String?
+  auth       String?
   platform   DevicePlatform
   deviceName String?        @db.VarChar(120)
   lastUsedAt DateTime?

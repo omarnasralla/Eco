@@ -341,9 +341,16 @@ export const notificationPreferencesSchema = z.object({
 });
 
 export const registerPushTokenSchema = z.object({
+  /** A device token, or for web push the subscription's endpoint URL. */
   token: z.string().min(8).max(512),
   platform: z.enum(['IOS', 'ANDROID', 'WEB']),
   deviceName: z.string().trim().max(120).optional(),
+  /**
+   * Web push only. The browser generates these two keys and the payload is
+   * encrypted to them, so a subscription without them can never be sent to.
+   */
+  p256dh: z.string().max(200).optional(),
+  auth: z.string().max(200).optional(),
 });
 
 /* ── Reports ──────────────────────────────────────────────── */

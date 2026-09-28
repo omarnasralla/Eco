@@ -68,6 +68,11 @@ export const envSchema = z
       .refine(nonDefault('replace_me'), 'ENCRYPTION_KEY is still the placeholder value'),
     ENCRYPTION_KEY_VERSION: z.coerce.number().int().positive().default(1),
 
+    // Web push. Optional: without them the app runs and simply does not push,
+    // which is the right failure for a machine that has none configured.
+    VAPID_PUBLIC_KEY: z.string().optional(),
+    VAPID_PRIVATE_KEY: z.string().optional(),
+    VAPID_SUBJECT: z.string().optional(),
     GOOGLE_CLIENT_ID: z.string().optional(),
     GOOGLE_CLIENT_SECRET: z.string().optional(),
     GOOGLE_CALLBACK_URL: z.string().optional(),
