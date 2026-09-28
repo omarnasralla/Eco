@@ -507,7 +507,11 @@ export class NotificationsService implements OnModuleInit {
             count === 1
               ? 'One captured expense was filed under a guess. Setting it teaches every future one.'
               : `${count} captured expenses were filed under a guess. Setting each one teaches every future purchase at that merchant.`,
-          actionUrl: '/eco/app/expenses',
+          // Straight into the review list. Safari shows no action buttons on
+          // a web push notification, so the destination is the only lever the
+          // notification has — landing on the full list and asking the user to
+          // find a filter would waste the tap.
+          actionUrl: '/eco/app/expenses?review=1',
           // Once a day at most, however many times this runs.
           dedupeKey: `needs-review:${new Date().toISOString().slice(0, 10)}`,
         });

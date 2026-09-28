@@ -67,7 +67,10 @@ function ExpensesContent() {
 
   const [search, setSearch] = useState('');
   const [categoryId, setCategoryId] = useState<string>('all');
-  const [reviewOnly, setReviewOnly] = useState(false);
+  // The "needs a category" notification links to ?review=1. Landing on the
+  // full list and making the user find the filter would waste the one tap the
+  // notification was for.
+  const [reviewOnly, setReviewOnly] = useState(searchParams.get('review') === '1');
   const [dialogOpen, setDialogOpen] = useState(searchParams.get('new') === '1');
   const [editing, setEditing] = useState<ExpenseDto | null>(null);
   const accounts = useQuery({ queryKey: queryKeys.accounts, queryFn: fetchers.accounts });
@@ -225,6 +228,19 @@ function ExpensesContent() {
                     ) : null}
                   </div>
                   </button>
+                  {/* One tap to file a guessed category, rather than opening
+                      the row and saving it. Safari shows no action buttons on
+                      a web push notification — not on iOS, not on macOS — so
+                      the notification can only bring you here; this is what
+                      makes arriving here worth the tap. Outside the button
+                      above, since a button inside a button is not valid. */}
+                  {expense.needsReview ? (
+                    <CategoryChips
+                      expense={expense}
+                      categories={categories.data ?? []}
+                      onDone={() => void queryClient.invalidateQueries()}
+                    />
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -821,6 +837,69 @@ function RenameMerchantControl({
         <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
           Cancel
         </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One-tap categorising for a captured expense whose category was guessed.
+ *
+ * This exists because of a hard platform limit: Safari renders no action
+ * buttons on a web push notification, on iOS or macOS. The notification can
+ * carry a title, a body and a destination, and nothing else — so "pick a
+ * category from the notification" is not buildable, and the next best thing is
+ * that arriving here costs one tap per expense instead of open-choose-save.
+ *
+ * Setting a category also teaches every future charge at that merchant, which
+ * is why clearing one of these is worth more than it looks.
+ */
+function CategoryChips({
+  expense,
+  categories,
+  onDone,
+}: {
+  expense: ExpenseDto;
+  categories: Array<{ id: string; name: string }>;
+  onDone: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  const assign = useMutation({
+    mutationFn: (categoryId: string) =>
+      // The API clears needsReview on any edit by a human, so this both files
+      // the expense and settles the question.
+      api.patch(`/expenses/${expense.id}`, { categoryId }),
+    onSuccess: onDone,
+    onError: () => setError('Could not set that category.'),
+  });
+
+  return (
+    <div className="px-4 pb-3">
+      {error ? (
+        <p role="alert" className="mb-1 text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
+      {/* Scrolls rather than wraps: on a phone a wrapping grid of thirteen
+          chips pushes the next expense off the screen entirely. */}
+      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+        {categories
+          .filter((category) => category.id !== expense.categoryId)
+          .map((category) => (
+            <button
+              key={category.id}
+              type="button"
+              disabled={assign.isPending}
+              onClick={() => {
+                setError(null);
+                assign.mutate(category.id);
+              }}
+              className="shrink-0 rounded-full border px-3 py-1 text-xs transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:opacity-50"
+            >
+              {category.name}
+            </button>
+          ))}
       </div>
     </div>
   );
