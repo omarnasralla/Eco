@@ -243,6 +243,40 @@ export const renameMerchantSchema = z.object({
 
 export type RenameMerchantInput = z.infer<typeof renameMerchantSchema>;
 
+/* ── Planned purchases ────────────────────────────────────── */
+
+/**
+ * Something you intend to buy in a given month, deliberately outside that
+ * month's budget.
+ */
+export const plannedPurchaseSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  amountMinor: positiveMinorAmount,
+  currency: currencyCode,
+  /** Any date inside the intended month; the server keeps the first of it. */
+  month: isoDate,
+  categoryId: uuid.nullish(),
+  /** The point of the feature, so it defaults on. */
+  excludeFromBudget: z.boolean().default(true),
+  notes: z.string().trim().max(500).nullish(),
+});
+
+export const updatePlannedPurchaseSchema = plannedPurchaseSchema.partial();
+
+/** Marking one bought, optionally pointing at the expense it became. */
+export const markPurchasedSchema = z.object({
+  /**
+   * The expense this turned into. Given one, the exclusion is applied to that
+   * row — which is the whole reason to plan a purchase ahead rather than
+   * remember to tick a box afterwards.
+   */
+  expenseId: uuid.nullish(),
+});
+
+export type PlannedPurchaseInput = z.infer<typeof plannedPurchaseSchema>;
+export type UpdatePlannedPurchaseInput = z.infer<typeof updatePlannedPurchaseSchema>;
+export type MarkPurchasedInput = z.infer<typeof markPurchasedSchema>;
+
 /* ── Debts ────────────────────────────────────────────────── */
 
 export const debtSchema = z.object({

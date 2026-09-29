@@ -2,13 +2,14 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Loader2, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { Check, Loader2, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import {
   formatMoney,
   toMajorUnits,
   toMinorUnits,
   type BudgetDto,
   type CategoryDto,
+  type PlannedPurchasesDto,
 } from '@eco/shared';
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
@@ -29,6 +30,13 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -90,6 +98,10 @@ export default function BudgetsPage() {
           </div>
         }
       />
+
+      {/* Shown whether or not a budget exists for the month: planning what you
+          intend to buy is useful on its own, and often precedes setting one. */}
+      <PlannedPurchasesCard month={month} categories={categories.data ?? []} locale={locale} />
 
       {budget.isLoading ? (
         <Skeleton className="h-64 w-full" />
@@ -470,5 +482,217 @@ function BudgetEditor({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * What you intend to buy this month, deliberately outside its budget.
+ *
+ * The distinction this screen has to make obvious: a planned purchase is a
+ * decision, not money already gone. It moves no balance and counts as no
+ * spending until it happens — so the totals are labelled "still to buy" rather
+ * than anything that sounds like a figure you owe.
+ *
+ * Marking one bought is where the value is. The exclusion decided here gets
+ * applied to the real expense then, instead of relying on someone remembering
+ * a checkbox weeks later at a till.
+ */
+function PlannedPurchasesCard({
+  month,
+  categories,
+  locale,
+}: {
+  month: string;
+  categories: Array<{ id: string; name: string }>;
+  locale: string;
+}) {
+  const queryClient = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState('');
+  const [amount, setAmount] = useState('');
+  const [categoryId, setCategoryId] = useState<string>('none');
+  const [error, setError] = useState<string | null>(null);
+
+  const planned = useQuery({
+    queryKey: ['planned', month],
+    queryFn: () => api.get<PlannedPurchasesDto>('/planned', { query: { month: `${month}-01` } }),
+  });
+
+  const refresh = () => void queryClient.invalidateQueries();
+
+  const add = useMutation({
+    mutationFn: () =>
+      api.post('/planned', {
+        name: name.trim(),
+        // Entered in the currency actually spent, not the reporting one.
+        amountMinor: toMinorUnits(Number(amount), planned.data?.currency ?? 'USD'),
+        currency: planned.data?.currency ?? 'USD',
+        month: `${month}-01`,
+        ...(categoryId !== 'none' ? { categoryId } : {}),
+      }),
+    onSuccess: () => {
+      setName('');
+      setAmount('');
+      setAdding(false);
+      refresh();
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Could not add that.'),
+  });
+
+  const markBought = useMutation({
+    mutationFn: (id: string) => api.post(`/planned/${id}/purchased`, {}),
+    onSuccess: refresh,
+  });
+  const cancel = useMutation({
+    mutationFn: (id: string) => api.post(`/planned/${id}/cancel`, {}),
+    onSuccess: refresh,
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.delete(`/planned/${id}`),
+    onSuccess: refresh,
+  });
+
+  const data = planned.data;
+  const money = (minor: number) => formatMoney(minor, data?.currency ?? 'USD', { locale });
+
+  return (
+    <Card className="mb-4">
+      <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+        <CardTitle className="text-base">Planned purchases</CardTitle>
+        <Button type="button" variant="outline" size="sm" onClick={() => setAdding((v) => !v)}>
+          <Plus className="size-4" aria-hidden />
+          Plan one
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {adding ? (
+          <div className="space-y-2 rounded-md border bg-muted/40 p-3">
+            <Input
+              placeholder="What is it?"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              aria-label="What are you planning to buy"
+            />
+            <Input
+              placeholder={`Amount in ${data?.currency ?? ''}`}
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              aria-label="Amount"
+            />
+            <Select value={categoryId} onValueChange={setCategoryId}>
+              <SelectTrigger aria-label="Category">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No category</SelectItem>
+                {categories.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              disabled={add.isPending || !name.trim() || !Number(amount)}
+              onClick={() => {
+                setError(null);
+                add.mutate();
+              }}
+            >
+              {add.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+              Add to {formatMonth(`${month}-01`, locale)}
+            </Button>
+          </div>
+        ) : null}
+
+        {planned.isLoading ? (
+          <Skeleton className="h-20 w-full" />
+        ) : (data?.items.length ?? 0) === 0 ? (
+          <p className="py-4 text-center text-sm text-muted-foreground">
+            Nothing planned for {formatMonth(`${month}-01`, locale)}. Things you add here are kept
+            out of this month&apos;s budget.
+          </p>
+        ) : (
+          <ul className="divide-y">
+            {data!.items.map((item) => (
+              <li key={item.id} className="flex items-center gap-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <p
+                    className={`truncate text-sm font-medium ${
+                      item.status === 'CANCELLED' ? 'text-muted-foreground line-through' : ''
+                    }`}
+                  >
+                    {item.name}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {item.categoryName ?? 'No category'}
+                    {item.excludeFromBudget ? ' · outside budget' : ' · counts toward budget'}
+                    {item.status === 'PURCHASED' ? ' · bought' : ''}
+                  </p>
+                </div>
+                <span className="tabular shrink-0 text-sm">
+                  {formatMoney(item.amountMinor, item.currency, { locale })}
+                </span>
+                {item.status === 'PLANNED' ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Mark ${item.name} as bought`}
+                      onClick={() => markBought.mutate(item.id)}
+                    >
+                      <Check className="size-4" aria-hidden />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Cancel ${item.name}`}
+                      onClick={() => cancel.mutate(item.id)}
+                    >
+                      <X className="size-4" aria-hidden />
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Remove ${item.name}`}
+                    onClick={() => remove.mutate(item.id)}
+                  >
+                    <Trash2 className="size-4" aria-hidden />
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {data && data.items.length > 0 ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-sm">
+            {/* "Still to buy", never anything that reads like a debt: none of
+                this is money that has left yet. */}
+            <span className="text-muted-foreground">Still to buy</span>
+            <span className="tabular font-medium">{money(data.outstandingMinor)}</span>
+          </div>
+        ) : null}
+        {data && data.outsideBudgetMinor > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {money(data.outsideBudgetMinor)} of that is set to stay outside this month&apos;s
+            budget, so it will not count against your limits when you buy it.
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }

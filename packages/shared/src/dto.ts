@@ -144,6 +144,40 @@ export interface RenameMerchantResultDto {
   categoryName: string | null;
 }
 
+export type PlannedPurchaseStatus = 'PLANNED' | 'PURCHASED' | 'CANCELLED';
+
+export interface PlannedPurchaseDto {
+  id: string;
+  name: string;
+  amountMinor: number;
+  currency: string;
+  /** Converted into the user's base currency, for the month's total. */
+  baseAmountMinor: number;
+  /** First day of the month it is planned for. */
+  month: string;
+  categoryId: string | null;
+  categoryName: string | null;
+  excludeFromBudget: boolean;
+  notes: string | null;
+  status: PlannedPurchaseStatus;
+  purchasedExpenseId: string | null;
+  purchasedAt: string | null;
+  createdAt: string;
+}
+
+/** A month's plan, with the totals that make it worth reading. */
+export interface PlannedPurchasesDto {
+  month: string;
+  items: PlannedPurchaseDto[];
+  /** Still to buy, in the base currency. */
+  outstandingMinor: number;
+  /** Already bought, in the base currency. */
+  purchasedMinor: number;
+  /** Of the outstanding total, how much is set to bypass the budget. */
+  outsideBudgetMinor: number;
+  currency: string;
+}
+
 export interface DebtDto {
   id: string;
   name: string;

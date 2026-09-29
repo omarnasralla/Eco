@@ -24,6 +24,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { AuditService } from './modules/audit/audit.service';
 import { AiModule } from './modules/ai/ai.module';
 import { IngestModule } from './modules/ingest/ingest.module';
+import { PlannedModule } from './modules/planned/planned.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from './modules/auth/guards/roles.guard';
@@ -100,6 +101,7 @@ import { UsersModule } from './modules/users/users.module';
     GoalsModule,
     BudgetsModule,
     IngestModule,
+    PlannedModule,
     DashboardModule,
     AiModule,
     NotificationsModule,

@@ -249,6 +249,7 @@ model User {
   conversations          AiConversation[]
   forecasts              ForecastSnapshot[]
   spendingPatterns       SpendingPattern[]
+  plannedPurchases       PlannedPurchase[]
 
   @@index([deletedAt])
   @@map("users")
@@ -306,6 +307,48 @@ model IngestToken {
 
   @@index([userId, revokedAt])
   @@map("ingest_tokens")
+}
+
+/**
+ * Something you intend to buy in a particular month, kept out of that month's
+ * budget on purpose.
+ * The existing `excludedFromBudget` flag says the same thing about money
+ * already spent — but only if someone remembers to tick it weeks later. This
+ * records the decision up front, so the exclusion follows the purchase
+ * automatically once it arrives.
+ * An intention, not a liability: nothing here moves a balance or changes net
+ * worth until `purchasedAt` is set.
+ */
+model PlannedPurchase {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+
+  name        String   @db.VarChar(160)
+  amountMinor BigInt
+  currency    String   @db.Char(3)
+  /// First day of the month it is planned for, matching Budget.month.
+  month       DateTime @db.Date
+
+  categoryId        String? @db.Uuid
+  /// Why this exists. Kept out of that month's budget limits unless cleared.
+  excludeFromBudget Boolean @default(true)
+  notes             String? @db.Text
+
+  /// The expense it became. Setting this applies the exclusion to that row.
+  purchasedExpenseId String?   @unique @db.Uuid
+  purchasedAt        DateTime?
+  /// Abandoned rather than bought. Kept, so a month's plan stays readable.
+  cancelledAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  expense  Expense?  @relation(fields: [purchasedExpenseId], references: [id], onDelete: SetNull)
+
+  @@index([userId, month])
+  @@map("planned_purchases")
 }
 
 model RefreshToken {
@@ -492,11 +535,12 @@ model Category {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  parent      Category?    @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
-  children    Category[]   @relation("CategoryTree")
-  expenses    Expense[]
-  budgetLines BudgetLine[]
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent           Category?         @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children         Category[]        @relation("CategoryTree")
+  expenses         Expense[]
+  budgetLines      BudgetLine[]
+  plannedPurchases PlannedPurchase[]
 
   @@unique([userId, name])
   @@index([userId, isArchived])
@@ -550,10 +594,11 @@ model Expense {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  category Category          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category        Category          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   /// Removing an account must not delete the spending that went through it.
-  account  FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  account         FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  plannedPurchase PlannedPurchase?
 
   /// Idempotency. Postgres treats NULLs as distinct, so hand-entered rows —
   /// which all have a null ref — do not collide with each other.
