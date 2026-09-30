@@ -14,6 +14,7 @@ import {
 import { api, ApiError } from '@/lib/api-client';
 import { fetchers, queryKeys } from '@/lib/queries';
 import { useMoneyFormat } from '@/lib/auth-provider';
+import { useSelectedMonth } from '@/lib/use-selected-month';
 import { formatMonth } from '@/lib/utils';
 import { useChartTheme } from '@/components/charts/chart-theme';
 import { PageHeader } from '@/components/layout/page-header';
@@ -53,7 +54,8 @@ export default function BudgetsPage() {
   const theme = useChartTheme();
   const money = (minor: number) => formatMoney(minor, currency, { locale });
 
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  // Shared with the Expenses list, so moving to August on one moves both.
+  const [month, setMonth] = useSelectedMonth();
   const budget = useQuery({
     queryKey: queryKeys.budget(month),
     queryFn: () => fetchers.budget(month),
@@ -608,7 +610,7 @@ function PlannedPurchasesCard({
               }}
             >
               {add.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-              Add to {formatMonth(`${month}-01`, locale)}
+              Add to {formatMonth(month, locale)}
             </Button>
           </div>
         ) : null}
@@ -617,7 +619,7 @@ function PlannedPurchasesCard({
           <Skeleton className="h-20 w-full" />
         ) : (data?.items.length ?? 0) === 0 ? (
           <p className="py-4 text-center text-sm text-muted-foreground">
-            Nothing planned for {formatMonth(`${month}-01`, locale)}. Things you add here are kept
+            Nothing planned for {formatMonth(month, locale)}. Things you add here are kept
             out of this month&apos;s budget.
           </p>
         ) : (

@@ -1,11 +1,16 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Loader2, Plus, Search, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Plus, Search, Trash2 } from 'lucide-react';
 import {
   expenseSchema,
   type AccountDto,
@@ -20,7 +25,8 @@ import { fetchers, queryKeys } from '@/lib/queries';
 import { useEntryCurrency } from '@/lib/entry-currency';
 import { useLastCategory } from '@/lib/last-category';
 import { useMoneyFormat } from '@/lib/auth-provider';
-import { formatDate } from '@/lib/utils';
+import { addMonths, currentMonth, monthRange, useSelectedMonth } from '@/lib/use-selected-month';
+import { formatDate, formatMonth } from '@/lib/utils';
 import { useChartTheme } from '@/components/charts/chart-theme';
 import { DailyAllowanceCard } from '@/components/budget/daily-allowance-card';
 import { PageHeader } from '@/components/layout/page-header';
@@ -71,25 +77,65 @@ function ExpensesContent() {
   // full list and making the user find the filter would waste the one tap the
   // notification was for.
   const [reviewOnly, setReviewOnly] = useState(searchParams.get('review') === '1');
+  const [month, setMonth] = useSelectedMonth();
   const [dialogOpen, setDialogOpen] = useState(searchParams.get('new') === '1');
   const [editing, setEditing] = useState<ExpenseDto | null>(null);
   const accounts = useQuery({ queryKey: queryKeys.accounts, queryFn: fetchers.accounts });
 
-  const filters = useMemo(
-    () => ({
+  const filters = useMemo(() => {
+    // Reviewing is about captured rows wherever they landed, so it deliberately
+    // ignores the month — a guessed category from three weeks ago still needs
+    // answering, and hiding it behind a month arrow is how it never gets done.
+    const range = reviewOnly ? null : monthRange(month);
+    return {
       limit: 50,
+      ...(range ? { from: range.from, to: range.to } : {}),
       ...(search ? { search } : {}),
       ...(categoryId !== 'all' ? { categoryId } : {}),
       ...(reviewOnly ? { needsReview: true } : {}),
-    }),
-    [search, categoryId, reviewOnly],
-  );
+      // Ordering by the date spent, not the order entered: a month's list is
+      // read as a diary, and captures arrive out of order.
+      sort: 'date' as const,
+      order: 'desc' as const,
+    };
+  }, [search, categoryId, reviewOnly, month]);
 
   const categories = useQuery({ queryKey: queryKeys.categories, queryFn: fetchers.categories });
-  const expenses = useQuery({
+  // Paged rather than a single fetch: one month can easily pass the 50-row
+  // page size — and did, which is why only part of the month was showing.
+  const expenses = useInfiniteQuery({
     queryKey: queryKeys.expenses(filters),
-    queryFn: () => fetchers.expenses(filters),
+    queryFn: ({ pageParam }) =>
+      fetchers.expenses({ ...filters, ...(pageParam ? { cursor: pageParam } : {}) }),
+    initialPageParam: undefined as string | undefined,
+    // The API returns null once the list is exhausted, which is what stops it.
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
+
+  const items = useMemo(
+    () => (expenses.data?.pages ?? []).flatMap((page) => page.items),
+    [expenses.data],
+  );
+
+  // Fetch the next page when the end of the list comes into view. An observer
+  // rather than a scroll handler: it fires once per crossing instead of on
+  // every pixel, and it works the same inside the phone's momentum scrolling.
+  const sentinel = useRef<HTMLDivElement | null>(null);
+  const { fetchNextPage, hasNextPage, isFetchingNextPage } = expenses;
+  useEffect(() => {
+    const node = sentinel.current;
+    if (!node || !hasNextPage) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && !isFetchingNextPage) void fetchNextPage();
+      },
+      // Start loading slightly before the end is reached, so the next rows are
+      // usually there by the time the user arrives at them.
+      { rootMargin: '300px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage, items.length]);
 
   // Its own query rather than a count of the list above: the prompt has to be
   // visible while a filter is applied, and the list may be showing anything.
@@ -141,6 +187,45 @@ function ExpensesContent() {
         </div>
       ) : null}
 
+      {/* The month being viewed, shared with Budgets so the two never disagree
+          about which month "last month" means. Hidden while reviewing, since
+          that view deliberately spans every month. */}
+      {!reviewOnly ? (
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label="Previous month"
+            onClick={() => setMonth(addMonths(month, -1))}
+          >
+            <ChevronLeft className="size-4" aria-hidden />
+          </Button>
+          <div className="text-center">
+            <p className="text-sm font-medium">{formatMonth(month, locale)}</p>
+            {month !== currentMonth() ? (
+              <button
+                type="button"
+                onClick={() => setMonth(currentMonth())}
+                className="text-xs text-muted-foreground underline underline-offset-2"
+              >
+                Back to this month
+              </button>
+            ) : null}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label="Next month"
+            // Nothing is recorded in the future, so going past this month shows
+            // an empty list and a dead end.
+            disabled={month >= currentMonth()}
+            onClick={() => setMonth(addMonths(month, 1))}
+          >
+            <ChevronRight className="size-4" aria-hidden />
+          </Button>
+        </div>
+      ) : null}
+
       {/* Filters sit in one row above the list, per the interaction spec. */}
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
         <div className="relative flex-1">
@@ -179,15 +264,17 @@ function ExpensesContent() {
                 <Skeleton key={i} className="h-16 w-full rounded-none" />
               ))}
             </div>
-          ) : (expenses.data?.items.length ?? 0) === 0 ? (
+          ) : items.length === 0 ? (
             <p className="px-4 py-12 text-center text-sm text-muted-foreground">
               {search || categoryId !== 'all'
                 ? 'No expenses match those filters.'
-                : 'No expenses yet. Add your first one to get started.'}
+                : reviewOnly
+                  ? 'Nothing is waiting for a category.'
+                  : `No expenses in ${formatMonth(month, locale)}.`}
             </p>
           ) : (
             <ul className="divide-y">
-              {expenses.data!.items.map((expense) => (
+              {items.map((expense) => (
                 <li key={expense.id}>
                   {/* The whole row is the control: on a phone a small pencil
                       icon is a worse target than the thing it would sit on. */}
@@ -245,6 +332,21 @@ function ExpensesContent() {
               ))}
             </ul>
           )}
+          {/* Watched by the observer above; crossing it loads the next page. */}
+          <div ref={sentinel} aria-hidden className="h-px" />
+          {expenses.isFetchingNextPage ? (
+            <p className="px-4 py-3 text-center text-sm text-muted-foreground">
+              <Loader2 className="mr-2 inline size-4 animate-spin" aria-hidden />
+              Loading more…
+            </p>
+          ) : !expenses.hasNextPage && items.length > 0 ? (
+            // Says the list is complete rather than leaving the user wondering
+            // whether more is still coming.
+            <p className="px-4 py-3 text-center text-xs text-muted-foreground">
+              {items.length} expense{items.length === 1 ? '' : 's'}
+              {reviewOnly ? ' awaiting a category' : ` in ${formatMonth(month, locale)}`}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 
