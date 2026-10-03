@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { decodeCursor, encodeCursor, keysetAfter, sortKeys } from './keyset';
 import type {
   ExpenseDto,
   ExpenseInput,
@@ -38,21 +39,6 @@ function toDto(expense: ExpenseRow): ExpenseDto {
     createdAt: expense.createdAt.toISOString(),
     updatedAt: expense.updatedAt.toISOString(),
   };
-}
-
-/** Opaque keyset cursor: `<iso date>|<id>`, base64url encoded. */
-function encodeCursor(date: Date, id: string): string {
-  return Buffer.from(`${date.toISOString()}|${id}`).toString('base64url');
-}
-
-function decodeCursor(cursor: string): { date: Date; id: string } | null {
-  try {
-    const [date, id] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
-    if (!date || !id) return null;
-    return { date: new Date(date), id };
-  } catch {
-    return null;
-  }
 }
 
 @Injectable()
@@ -113,22 +99,19 @@ export class ExpensesService {
     // merchant fall back to offset, which is acceptable because they are used
     // for small filtered views rather than infinite scroll.
     //
-    // The cursor carries whichever timestamp the sort is keyed on, so paging
-    // and ordering cannot disagree — comparing a createdAt cursor against the
-    // date column would skip and repeat rows.
-    const timeField = query.sort === 'created' ? 'createdAt' : 'date';
+    // Paging and ordering read the same key list, so they cannot disagree —
+    // comparing a createdAt cursor against the date column would skip and
+    // repeat rows.
     const chronological = query.sort === 'created' || query.sort === 'date';
     const cursor = query.cursor ? decodeCursor(query.cursor) : null;
+    let keys = sortKeys(query.sort);
+    // A cursor from before `createdAt` joined the key list has no value for
+    // it. Sorting on a key the cursor cannot address would skip whatever was
+    // spent that day after midnight, so this page is served under the key list
+    // the cursor was issued for and picks the finer order up on the next one.
+    if (cursor?.legacy) keys = keys.filter((key) => key !== 'createdAt');
     if (cursor && chronological) {
-      const comparator = query.order === 'desc' ? 'lt' : 'gt';
-      where.AND = [
-        {
-          OR: [
-            { [timeField]: { [comparator]: cursor.date } },
-            { [timeField]: cursor.date, id: { [comparator]: cursor.id } },
-          ],
-        },
-      ];
+      where.AND = [keysetAfter(keys, cursor.values, query.order === 'desc' ? 'lt' : 'gt')];
     }
 
     const orderBy: Prisma.ExpenseOrderByWithRelationInput[] =
@@ -136,7 +119,7 @@ export class ExpensesService {
         ? [{ baseAmountMinor: query.order }, { id: query.order }]
         : query.sort === 'merchant'
           ? [{ merchant: query.order }, { id: query.order }]
-          : [{ [timeField]: query.order }, { id: query.order }];
+          : keys.map((key) => ({ [key]: query.order }));
 
     // Fetch one extra row to learn whether another page exists, without a
     // second COUNT query on every scroll.
@@ -153,8 +136,7 @@ export class ExpensesService {
 
     return {
       items: items.map(toDto),
-      nextCursor:
-        hasMore && last ? encodeCursor(last[timeField], last.id) : null,
+      nextCursor: hasMore && last ? encodeCursor(last) : null,
     };
   }
 
