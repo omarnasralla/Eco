@@ -125,6 +125,59 @@ Via:0115 - Visa
     expect(parseTransactionSms(TOPUP)?.kind).toBe('IGNORE');
   });
 
+  /**
+   * The real message, verbatim — the one that arrived unparsed on 4 Oct and
+   * had to be cancelled by hand. Note the currency code BEFORE the number and
+   * the labelled `Date:`, neither of which the purchase format uses.
+   */
+  const REVERSAL = `Reversed Transaction
+Card: 1360
+Amount: SAR 11.84
+At: Jeeny
+Date: 4-10-2026 09:18`;
+
+  it('reads a reversal, code-first amount and all', () => {
+    expect(parseTransactionSms(REVERSAL)).toEqual({
+      kind: 'REVERSAL',
+      amountMinor: 1184,
+      currency: 'SAR',
+      merchant: 'Jeeny',
+      cardLast4: '1360',
+      date: '2026-10-04',
+    });
+  });
+
+  it('reads the same reversal flattened onto one line', () => {
+    expect(parseTransactionSms(REVERSAL.replace(/\n/g, ' '))).toEqual(
+      parseTransactionSms(REVERSAL),
+    );
+  });
+
+  it('does not stop the merchant short, nor swallow the labelled date', () => {
+    // `Date:` is a field label the purchase format does not use, so it has to
+    // be a field boundary too — otherwise the merchant becomes "Jeeny Date".
+    expect(parseTransactionSms(REVERSAL)?.merchant).toBe('Jeeny');
+  });
+
+  it('tells a reversal from a refund — they undo a charge differently', () => {
+    // A refund is money arriving and belongs in the ledger; a reversal means
+    // the money never left and the row should not exist.
+    const refund = REVERSAL.replace('Reversed Transaction', 'Refund');
+    expect(parseTransactionSms(refund)?.kind).toBe('RECEIVE');
+    expect(parseTransactionSms(REVERSAL)?.kind).toBe('REVERSAL');
+  });
+
+  it('reads the amount with the code on either side of the number', () => {
+    const codeFirst = parseTransactionSms(MAIN.replace('Amount:10.62 SAR', 'Amount: SAR 10.62'));
+    expect(codeFirst?.amountMinor).toBe(1062);
+    expect(codeFirst?.currency).toBe('SAR');
+    expect(parseTransactionSms(MAIN)?.amountMinor).toBe(1062);
+  });
+
+  it('still requires a currency code, on whichever side', () => {
+    expect(parseTransactionSms(MAIN.replace('Amount:10.62 SAR', 'Amount:10.62'))).toBeNull();
+  });
+
   it('refuses an urpay message whose type it has never seen', () => {
     const unknown = `Salary Credited
 At:EMPLOYER

@@ -116,6 +116,8 @@ enum NotificationType {
   NEEDS_REVIEW
   /// A message whose format the parser has never seen.
   CAPTURE_UNKNOWN
+  /// A bank reversed a charge, so the expense captured from it was removed.
+  TRANSACTION_REVERSED
 }
 
 enum RecommendationKind {

@@ -8,6 +8,7 @@ import type {
   NotificationType,
   Paginated,
 } from '@eco/shared';
+import { formatMoney } from '@eco/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { MailService } from '../mail/mail.service';
@@ -398,6 +399,49 @@ export class NotificationsService implements OnModuleInit {
       body: `Nothing was recorded for: "${text.slice(0, 120)}"`,
       actionUrl: '/eco/app/expenses',
       dedupeKey: `capture-unknown:${new Date().toISOString().slice(0, 10)}`,
+    });
+  }
+
+  /**
+   * A charge was cancelled because the bank reversed it.
+   *
+   * Worth saying out loud even though nothing needs doing: an expense
+   * disappearing from the list on its own is alarming unless you are told why,
+   * and this is the one capture that deletes rather than adds.
+   */
+  async expenseReversed(
+    userId: string,
+    merchant: string,
+    amountMinor: number,
+    currency: string,
+  ): Promise<void> {
+    await this.create(userId, {
+      type: 'TRANSACTION_REVERSED',
+      title: 'A charge was reversed',
+      body: `${merchant} reversed ${formatMoney(amountMinor, currency)}. The expense has been removed.`,
+      actionUrl: '/eco/app/expenses',
+    });
+  }
+
+  /**
+   * A reversal arrived with no charge to cancel.
+   *
+   * Not deduped by day: each unmatched reversal is a separate charge left
+   * standing, and collapsing them would hide all but the first.
+   */
+  async reversalUnmatched(
+    userId: string,
+    merchant: string,
+    amountMinor: number,
+    currency: string,
+  ): Promise<void> {
+    await this.create(userId, {
+      type: 'CAPTURE_FAILED',
+      title: 'A reversal matched nothing',
+      body:
+        `The bank reversed ${formatMoney(amountMinor, currency)} at ${merchant}, ` +
+        `but no recorded expense matched it. Nothing was changed.`,
+      actionUrl: '/eco/app/expenses',
     });
   }
 

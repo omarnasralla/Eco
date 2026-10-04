@@ -96,6 +96,8 @@ export const NOTIFICATION_TYPES = [
   'NEEDS_REVIEW',
   /** A bank message arrived in a shape the parser has never seen. */
   'CAPTURE_UNKNOWN',
+  /** A bank reversed a charge, so the expense captured from it was removed. */
+  'TRANSACTION_REVERSED',
   'SYSTEM',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

@@ -22,12 +22,22 @@ import { detectCurrency, parseAmountToMinor } from '../../common/utils/parse-amo
 import { toNumber } from '../../common/utils/money';
 import { fromIsoDate, todayIso } from '../../common/utils/dates';
 import { parseTransactionSms } from './sms-parser';
+import type { ParsedSms } from './sms-parser';
 
 /** Where a tap lands when its merchant has never been categorised before. */
 const FALLBACK_CATEGORY_SLUG = 'miscellaneous';
 
 /** The width of expenses.externalRef. Longer references are stored as a hash. */
 const MAX_REFERENCE_LENGTH = 120;
+
+/**
+ * How far back a reversal may reach for the charge it cancels.
+ *
+ * Banks reverse within days. The window is the safety rail: without one, a
+ * reversal would eventually match an unrelated charge of the same amount at
+ * the same shop months earlier and delete that instead.
+ */
+const REVERSAL_WINDOW_DAYS = 30;
 
 @Injectable()
 export class IngestService {
@@ -296,6 +306,10 @@ export class IngestService {
       };
     }
 
+    if (parsed.kind === 'REVERSAL') {
+      return this.applyReversal(userId, parsed, reference, account);
+    }
+
     if (parsed.kind === 'RECEIVE') {
       const existing = await this.prisma.incomeReceipt.findFirst({
         where: { userId, notes: reference },
@@ -363,6 +377,117 @@ export class IngestService {
       account,
     );
     return { ...result, kind: parsed.kind };
+  }
+
+  /**
+   * Cancel the charge a reversal refers to.
+   *
+   * The bank is not moving money here — it is retracting a charge it already
+   * alerted us about, so the honest record is that the expense never happened.
+   * It is deleted, not offset by a credit: a cancelled charge and a refund look
+   * identical in a monthly total but not in a list of what you bought, and the
+   * reversed row was never a purchase.
+   *
+   * Matched on amount, currency and merchant, newest first, because that is all
+   * the reversal gives us — it carries no reference to the charge it undoes.
+   * Narrow enough to be safe: two identical amounts at the same merchant inside
+   * the window are the same recurring charge, and cancelling the later one is
+   * right. Deliberately NOT matched on account, which is inferred from the card
+   * rather than stated, and would miss a charge filed before that card was
+   * mapped.
+   */
+  private async applyReversal(
+    userId: string,
+    parsed: ParsedSms,
+    reference: string,
+    account: { id: string; name: string; currency: string } | null,
+  ): Promise<IngestResultDto & { kind: string }> {
+    // Already applied? The cancelled row claims the reversal's own reference,
+    // and (userId, externalRef) is unique, so there is at most one — a message
+    // forwarded twice cancels one expense, not two.
+    const already = await this.prisma.expense.findFirst({
+      where: { userId, externalRef: reference },
+      include: { category: { select: { name: true } } },
+    });
+    if (already) {
+      return {
+        kind: parsed.kind,
+        expenseId: already.id,
+        duplicate: true,
+        amountMinor: toNumber(already.amountMinor),
+        currency: already.currency,
+        merchant: already.merchant ?? parsed.merchant,
+        categoryName: already.category.name,
+        needsReview: false,
+        accountName: account?.name ?? null,
+      };
+    }
+
+    const reversedOn = fromIsoDate(parsed.date);
+    // A bank reverses within days. Looking further back would eventually find
+    // an unrelated charge of the same amount at the same shop and delete it.
+    const earliest = new Date(reversedOn);
+    earliest.setUTCDate(earliest.getUTCDate() - REVERSAL_WINDOW_DAYS);
+
+    const match = await this.prisma.expense.findFirst({
+      where: {
+        userId,
+        deletedAt: null,
+        amountMinor: BigInt(parsed.amountMinor),
+        currency: parsed.currency,
+        merchant: { equals: parsed.merchant, mode: 'insensitive' },
+        date: { gte: earliest, lte: reversedOn },
+      },
+      // The latest one, under the same ordering the expenses list uses.
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+      include: { category: { select: { name: true } } },
+    });
+
+    if (!match) {
+      // Told, not swallowed. A reversal with nothing to cancel means either the
+      // charge was never captured or it was already removed by hand, and both
+      // are things to look at rather than to discard in silence.
+      void this.notifications
+        .reversalUnmatched(userId, parsed.merchant, parsed.amountMinor, parsed.currency)
+        .catch((e: Error) => this.logger.warn(`Could not notify: ${e.message}`));
+      this.logger.warn(
+        `reversal unmatched user=${userId} merchant=${parsed.merchant} ` +
+          `amount=${parsed.amountMinor} ${parsed.currency} on=${parsed.date}`,
+      );
+      throw new NotFoundException(
+        'That reversal does not match any recorded expense. Nothing was changed.',
+      );
+    }
+
+    await this.prisma.expense.update({
+      where: { id: match.id },
+      // The reversal's reference replaces the purchase's, which is what makes
+      // this idempotent. It also releases the purchase's reference, matching
+      // what deleting an expense by hand does.
+      data: { deletedAt: new Date(), externalRef: reference },
+    });
+    await this.redis.invalidateUser(userId);
+
+    void this.notifications
+      .expenseReversed(userId, match.merchant ?? parsed.merchant, parsed.amountMinor, parsed.currency)
+      .catch((e: Error) => this.logger.warn(`Could not notify: ${e.message}`));
+
+    this.logger.log(
+      `reversal applied user=${userId} expense=${match.id} merchant=${parsed.merchant} ` +
+        `amount=${parsed.amountMinor} ${parsed.currency}`,
+    );
+
+    return {
+      kind: parsed.kind,
+      expenseId: match.id,
+      duplicate: false,
+      amountMinor: toNumber(match.amountMinor),
+      currency: match.currency,
+      merchant: match.merchant ?? parsed.merchant,
+      categoryName: match.category.name,
+      needsReview: false,
+      accountName: account?.name ?? null,
+    };
   }
 
   /** The account holding this card, or the primary one when the card is unknown. */

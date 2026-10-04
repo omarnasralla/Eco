@@ -11,8 +11,14 @@ import { parseAmountToMinor } from '../../common/utils/parse-amount';
  * IGNORE is for movement inside one account — topping the wallet up from the
  * bank account behind it. Nothing entered or left; recording it would count
  * the same riyals a second time.
+ *
+ * REVERSAL is not a transaction of its own: the bank is saying a charge it
+ * already told us about never happened. It cancels that charge rather than
+ * recording anything, which is why it cannot be folded into RECEIVE — money
+ * coming back is a refund and belongs in the ledger, whereas a reversal means
+ * the money never left and the row should not be there at all.
  */
-export type SmsKind = 'SPEND' | 'RECEIVE' | 'IGNORE';
+export type SmsKind = 'SPEND' | 'RECEIVE' | 'IGNORE' | 'REVERSAL';
 
 /** One transaction, read out of a bank's SMS alert. */
 export interface ParsedSms {
@@ -34,6 +40,8 @@ export interface ParsedSms {
 const URPAY_KINDS: Array<{ match: RegExp; kind: SmsKind }> = [
   { match: /^\s*(online|pos)\s+purchase/i, kind: 'SPEND' },
   { match: /^\s*refund/i, kind: 'RECEIVE' },
+  // "Reversed Transaction" — the charge is being withdrawn, not repaid.
+  { match: /^\s*revers(ed|al)/i, kind: 'REVERSAL' },
   { match: /^\s*debit via wallet/i, kind: 'SPEND' },
   { match: /^\s*credit via wallet/i, kind: 'RECEIVE' },
   // Bank account to e-wallet: the same account either side.
@@ -66,9 +74,13 @@ const PATTERNS: Array<{ name: string; parse: (text: string) => ParsedSms | null 
       const kind = URPAY_KINDS.find((k) => k.match.test(text))?.kind;
       if (!kind) return null;
 
-      const amount = /Amount:\s*([\d.,]+)\s*([A-Za-z]{3})/i.exec(text);
+      // The code sits after the number on a purchase ("Amount:11.84 SAR") and
+      // before it on a reversal ("Amount: SAR 11.84"). Same bank, same alert
+      // family, two orders — so both are read rather than one being the rule.
+      const amount = AMOUNT.exec(text);
       const date = /(\d{1,2})-(\d{1,2})-(\d{4})/.exec(text);
       if (!amount || !date) return null;
+      const [, codeFirst, afterCode, numberFirst, afterNumber] = amount;
 
       // Purchases and refunds name a merchant with "At:"; wallet transfers
       // name a person with "To:" or "From:". A top up names neither — there is
@@ -79,10 +91,10 @@ const PATTERNS: Array<{ name: string; parse: (text: string) => ParsedSms | null 
 
       // "By:" on a purchase, "Card:" on a refund, "Via:" on a top up.
       const card = /(?:By|Card|Via):\s*(\d{3,4})/i.exec(text);
-      const currency = amount[2]!.toUpperCase();
+      const currency = (codeFirst ?? afterNumber)!.toUpperCase();
       return {
         kind,
-        amountMinor: parseAmountToMinor(amount[1]!, currency),
+        amountMinor: parseAmountToMinor((afterCode ?? numberFirst)!, currency),
         currency,
         merchant: counterparty ?? 'Top up',
         cardLast4: card ? card[1]!.slice(-4) : null,
@@ -151,6 +163,14 @@ export function parseTransactionSms(text: string): ParsedSms | null {
  * text — whichever comes first. Works on the flattened form and on the
  * original multi-line one alike.
  */
+/**
+ * `Amount:` with its currency code on either side of the number.
+ *
+ * Two alternatives rather than an optional code on each end, so exactly one
+ * code is required and the capture groups say which order was found.
+ */
+const AMOUNT = /Amount:\s*(?:([A-Za-z]{3})\s*([\d.,]+)|([\d.,]+)\s*([A-Za-z]{3}))/i;
+
 const FIELD_END = /\s*(?:\d{1,2}[-/]\d{1,2}[-/]\d{4}|By:|Card:|Via:|Amount:|Date:|At:|To:|From:)|\s*$/i;
 
 function labelled(text: string, labels: string[]): string | null {
