@@ -121,6 +121,15 @@ services:
     image: ollama/ollama:latest
     container_name: eco-ollama
     restart: unless-stopped
+    # Opt-in: `docker compose --profile llm up -d ollama`.
+    #
+    # Nothing reaches for it. The API talks to the Python AI service, and when
+    # that is down — which is always, it is not deployed — forecasts, the
+    # health score and recommendations fall back to @eco/core and are computed
+    # from the ledger in-process. Every one of those requests has been served
+    # that way. Left running it sat idle with no model loaded and no client,
+    # holding 8.4 GB of image and 1.9 GB of weights for nothing.
+    profiles: [llm]
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
