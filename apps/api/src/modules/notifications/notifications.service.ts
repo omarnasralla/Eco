@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import webpush from 'web-push';
+import { createHash } from 'node:crypto';
 import type {
   NotificationDto,
   NotificationPreferences,
@@ -398,7 +399,12 @@ export class NotificationsService implements OnModuleInit {
       title: 'A bank message was not recognised',
       body: `Nothing was recorded for: "${text.slice(0, 120)}"`,
       actionUrl: '/eco/app/expenses',
-      dedupeKey: `capture-unknown:${new Date().toISOString().slice(0, 10)}`,
+      // Keyed on the MESSAGE, not just the day. Keyed on the day alone, three
+      // different unrecognised messages on one day left one notification and
+      // threw the other two texts away — which is how a Contabo charge went
+      // unrecorded for twelve days without anybody being able to see what the
+      // message had said. The same message forwarded twice still collapses.
+      dedupeKey: `capture-unknown:${createHash('sha256').update(text.trim()).digest('hex').slice(0, 32)}`,
     });
   }
 

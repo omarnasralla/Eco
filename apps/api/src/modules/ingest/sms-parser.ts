@@ -28,8 +28,23 @@ export interface ParsedSms {
   merchant: string;
   /** Last four digits of the card, which is what maps to an account. */
   cardLast4: string | null;
-  /** The date the bank stated, as YYYY-MM-DD. */
-  date: string;
+  /**
+   * The date the bank stated, as YYYY-MM-DD, or null when it stated none.
+   *
+   * The international-purchase alert carries no date at all, so the caller
+   * falls back to the day it arrived. Null rather than silently today, because
+   * "the bank did not say" and "the bank said today" are different facts and
+   * only one of them is worth a note on the row.
+   */
+  date: string | null;
+  /**
+   * A separately-stated fee, in its own currency.
+   *
+   * A foreign purchase is billed as the amount plus a VAT line in riyals. Two
+   * currencies cannot be added, so the fee is carried alongside rather than
+   * folded into the total, and recorded where it can be seen.
+   */
+  fee: { amountMinor: number; currency: string } | null;
 }
 
 /**
@@ -42,6 +57,14 @@ const URPAY_KINDS: Array<{ match: RegExp; kind: SmsKind }> = [
   { match: /^\s*refund/i, kind: 'RECEIVE' },
   // "Reversed Transaction" — the charge is being withdrawn, not repaid.
   { match: /^\s*revers(ed|al)/i, kind: 'REVERSAL' },
+  // A foreign card purchase. Same event as an Online Purchase, different
+  // template: it adds Country and Fees/VAT, and states no date.
+  { match: /^\s*international\s+purchase/i, kind: 'SPEND' },
+  // A 3-D Secure one-time code, sent BEFORE the purchase goes through. It
+  // names an amount and a merchant, which is exactly what makes it dangerous:
+  // read as a transaction it would double-count every online purchase, since
+  // the real alert follows separately once the payment completes.
+  { match: /^\s*verification\s+code/i, kind: 'IGNORE' },
   { match: /^\s*debit via wallet/i, kind: 'SPEND' },
   { match: /^\s*credit via wallet/i, kind: 'RECEIVE' },
   // Bank account to e-wallet: the same account either side.
@@ -78,8 +101,7 @@ const PATTERNS: Array<{ name: string; parse: (text: string) => ParsedSms | null 
       // before it on a reversal ("Amount: SAR 11.84"). Same bank, same alert
       // family, two orders — so both are read rather than one being the rule.
       const amount = AMOUNT.exec(text);
-      const date = /(\d{1,2})-(\d{1,2})-(\d{4})/.exec(text);
-      if (!amount || !date) return null;
+      if (!amount) return null;
       const [, codeFirst, afterCode, numberFirst, afterNumber] = amount;
 
       // Purchases and refunds name a merchant with "At:"; wallet transfers
@@ -92,13 +114,22 @@ const PATTERNS: Array<{ name: string; parse: (text: string) => ParsedSms | null 
       // "By:" on a purchase, "Card:" on a refund, "Via:" on a top up.
       const card = /(?:By|Card|Via):\s*(\d{3,4})/i.exec(text);
       const currency = (codeFirst ?? afterNumber)!.toUpperCase();
+      const fee = FEE.exec(text);
+      const feeCurrency = fee ? (fee[1] ?? fee[4])!.toUpperCase() : null;
       return {
         kind,
         amountMinor: parseAmountToMinor((afterCode ?? numberFirst)!, currency),
         currency,
         merchant: counterparty ?? 'Top up',
         cardLast4: card ? card[1]!.slice(-4) : null,
-        date: iso(date[3]!, date[2]!, date[1]!),
+        date: statedDate(text),
+        fee:
+          fee && feeCurrency
+            ? {
+                amountMinor: parseAmountToMinor((fee[2] ?? fee[3])!, feeCurrency),
+                currency: feeCurrency,
+              }
+            : null,
       };
     },
   },
@@ -123,6 +154,7 @@ const PATTERNS: Array<{ name: string; parse: (text: string) => ParsedSms | null 
         merchant: clean(m[4]!),
         cardLast4: m[1]!.slice(-4),
         date: iso(m[7]!, m[6]!, m[5]!),
+        fee: null,
       };
     },
   },
@@ -171,11 +203,48 @@ export function parseTransactionSms(text: string): ParsedSms | null {
  */
 const AMOUNT = /Amount:\s*(?:([A-Za-z]{3})\s*([\d.,]+)|([\d.,]+)\s*([A-Za-z]{3}))/i;
 
-const FIELD_END = /\s*(?:\d{1,2}[-/]\d{1,2}[-/]\d{4}|By:|Card:|Via:|Amount:|Date:|At:|To:|From:)|\s*$/i;
+/** `Fees/VAT:SAR 1.12` — the same either-order rule as the amount. */
+const FEE = /Fees\/VAT:\s*(?:([A-Za-z]{3})\s*([\d.,]+)|([\d.,]+)\s*([A-Za-z]{3}))/i;
+
+/**
+ * Every label that ends the field before it.
+ *
+ * `\b` before the group is load-bearing: without it, `At:` matches inside
+ * `Fees/VAT:`, which comes FIRST in an international alert — so the merchant
+ * was read as the VAT amount, "SAR 1.12". `Fees/VAT:` is listed ahead of the
+ * group so it still ends a field at its own position.
+ */
+const LABELS =
+  String.raw`Fees\/VAT:|\b(?:By|Card|Via|Amount|Date|At|To|From|Country|Service):`;
+
+/** Both written forms: `20-10-2026` and `2026-10-20`. */
+const DMY = /\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b/;
+const YMD = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/;
+
+/**
+ * The date the message states, or null when it states none.
+ *
+ * An international purchase carries no date; the caller files it on the day it
+ * arrived. Both orders are tried rather than one being assumed, because the
+ * same bank writes `4-10-2026` on a purchase and `2026-10-22` on a 3-D Secure
+ * code — and read with the wrong rule, 2026-10-22 becomes day 2026.
+ */
+function statedDate(text: string): string | null {
+  const ymd = YMD.exec(text);
+  if (ymd) return iso(ymd[1]!, ymd[2]!, ymd[3]!);
+  const dmy = DMY.exec(text);
+  if (dmy) return iso(dmy[3]!, dmy[2]!, dmy[1]!);
+  return null;
+}
+
+const FIELD_END = new RegExp(
+  String.raw`\s*(?:\d{1,2}[-/]\d{1,2}[-/]\d{4}|\d{4}-\d{1,2}-\d{1,2}|${LABELS})|\s*$`,
+  'i',
+);
 
 function labelled(text: string, labels: string[]): string | null {
   for (const label of labels) {
-    const start = new RegExp(`${label}:\\s*`, 'i').exec(text);
+    const start = new RegExp(`\\b${label}:\\s*`, 'i').exec(text);
     if (!start) continue;
     const rest = text.slice(start.index + start[0].length);
     const end = FIELD_END.exec(rest);
@@ -187,7 +256,13 @@ function labelled(text: string, labels: string[]): string | null {
 
 /** Trailing punctuation and collapsed whitespace; the name is otherwise kept. */
 function clean(merchant: string): string {
-  return merchant.replace(/\s+/g, ' ').replace(/[.,;]+$/, '').trim();
+  // Trailing asterisks come from the terminal padding a fixed-width field —
+  // "CONTABO*.." is Contabo. Leading and inner ones are kept, because "UBR* PEN"
+  // is how that merchant is actually spelled.
+  return merchant
+    .replace(/\s+/g, ' ')
+    .replace(/[.,;*]+$/, '')
+    .trim();
 }
 
 function iso(year: string, month: string, day: string): string {

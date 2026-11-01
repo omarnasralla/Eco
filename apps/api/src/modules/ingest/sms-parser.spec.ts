@@ -23,6 +23,7 @@ describe('parseTransactionSms', () => {
       merchant: 'Jeeny',
       cardLast4: '1360',
       date: '2026-09-28',
+      fee: null,
     });
   });
 
@@ -34,6 +35,7 @@ describe('parseTransactionSms', () => {
       merchant: 'STCC RTL 71089 RIYADH SA',
       cardLast4: '0363',
       date: '2026-08-17',
+      fee: null,
     });
   });
 
@@ -144,6 +146,7 @@ Date: 4-10-2026 09:18`;
       merchant: 'Jeeny',
       cardLast4: '1360',
       date: '2026-10-04',
+      fee: null,
     });
   });
 
@@ -178,6 +181,88 @@ Date: 4-10-2026 09:18`;
     expect(parseTransactionSms(MAIN.replace('Amount:10.62 SAR', 'Amount:10.62'))).toBeNull();
   });
 
+  /**
+   * The real message, verbatim — the one that quietly stopped a monthly VPS
+   * charge being recorded for twelve days. Note there is NO date line, and
+   * that `Fees/VAT:` appears BEFORE `At:`.
+   */
+  const INTERNATIONAL = `International purchase
+Country: Germany
+Card:1360; VISA; 40060117200
+Amount: 10.35 USD
+Fees/VAT:SAR 1.12
+At: CONTABO*..
+`;
+
+  it('reads an international purchase, in its own currency', () => {
+    expect(parseTransactionSms(INTERNATIONAL)).toEqual({
+      kind: 'SPEND',
+      amountMinor: 1035,
+      currency: 'USD',
+      merchant: 'CONTABO',
+      cardLast4: '1360',
+      // The alert states no date; the caller files it on the day it arrived.
+      date: null,
+      fee: { amountMinor: 112, currency: 'SAR' },
+    });
+  });
+
+  it('does not read the VAT amount as the merchant', () => {
+    // `Fees/VAT:` ends in "AT:", and it comes before the real `At:` — so an
+    // unanchored label matched it and the merchant became "SAR 1.12".
+    expect(parseTransactionSms(INTERNATIONAL)?.merchant).toBe('CONTABO');
+  });
+
+  it('keeps the fee separate rather than adding two currencies', () => {
+    const parsed = parseTransactionSms(INTERNATIONAL);
+    expect(parsed?.amountMinor).toBe(1035);
+    expect(parsed?.currency).toBe('USD');
+    expect(parsed?.fee).toEqual({ amountMinor: 112, currency: 'SAR' });
+  });
+
+  it('reads an international purchase flattened onto one line', () => {
+    expect(parseTransactionSms(INTERNATIONAL.replace(/\n/g, ' '))).toEqual(
+      parseTransactionSms(INTERNATIONAL),
+    );
+  });
+
+  it('strips the terminal padding from a merchant but not an inner asterisk', () => {
+    expect(parseTransactionSms(INTERNATIONAL)?.merchant).toBe('CONTABO');
+    const inner = INTERNATIONAL.replace('CONTABO*..', 'UBR* PEN');
+    expect(parseTransactionSms(inner)?.merchant).toBe('UBR* PEN');
+  });
+
+  /**
+   * A 3-D Secure code, sent BEFORE the payment goes through. It names an
+   * amount and a merchant, and the real purchase alert arrives separately once
+   * the payment completes — so reading this as a transaction double-counts
+   * every online purchase.
+   */
+  const OTP = `Verification code: 696413
+Service: Digital products
+Amount:SAR 120.00
+At:Amazon
+2026-10-22 12:44
+Don't share the code`;
+
+  it('ignores a verification code rather than recording it twice', () => {
+    expect(parseTransactionSms(OTP)).toEqual({
+      kind: 'IGNORE',
+      amountMinor: 12000,
+      currency: 'SAR',
+      merchant: 'Amazon',
+      cardLast4: null,
+      date: '2026-10-22',
+      fee: null,
+    });
+  });
+
+  it('reads a year-first date without reading the year as a day', () => {
+    // "2026-10-22" under a day-first rule is day 2026 of month 10.
+    expect(parseTransactionSms(OTP)?.date).toBe('2026-10-22');
+    expect(parseTransactionSms(MAIN)?.date).toBe('2026-09-28');
+  });
+
   it('refuses an urpay message whose type it has never seen', () => {
     const unknown = `Salary Credited
 At:EMPLOYER
@@ -204,6 +289,7 @@ Amount:5000 SAR
         merchant: 'Jeeny',
         cardLast4: '1360',
         date: '2026-09-28',
+        fee: null,
       });
     });
 

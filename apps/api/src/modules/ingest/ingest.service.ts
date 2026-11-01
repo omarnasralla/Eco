@@ -20,6 +20,7 @@ import { CurrencyService } from '../currency/currency.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { detectCurrency, parseAmountToMinor } from '../../common/utils/parse-amount';
 import { toNumber } from '../../common/utils/money';
+import { formatMoney } from '@eco/shared';
 import { fromIsoDate, todayIso } from '../../common/utils/dates';
 import { parseTransactionSms } from './sms-parser';
 import type { ParsedSms } from './sms-parser';
@@ -281,17 +282,31 @@ export class IngestService {
       );
     }
 
+    const account = await this.accountForCard(userId, parsed.cardLast4);
+
+    // An international-purchase alert states no date, so it is filed on the day
+    // it arrived — which is the day it was spent, since the alert is immediate.
+    const occurredOn = parsed.date ?? todayIso();
+
     // The message text keyed to this user — stable across retries, different
     // for every genuine transaction.
+    //
+    // An UNDATED message is the exception, and it matters: the
+    // international-purchase alert carries no date and no transaction number,
+    // so a subscription at an unchanged price produces a byte-identical text
+    // every month. Keyed on the text alone, November's charge would be refused
+    // as a repeat of October's and silently never recorded — the same class of
+    // failure as the format being unparsed in the first place. The arrival date
+    // joins the key there, which still collapses a same-day retry (the failure
+    // a reference exists to prevent) while letting next month's charge through.
     const reference = createHash('sha256')
-      .update(`${userId}:${text.trim()}`)
+      .update(parsed.date ? `${userId}:${text.trim()}` : `${userId}:${text.trim()}:${occurredOn}`)
       .digest('hex');
-
-    const account = await this.accountForCard(userId, parsed.cardLast4);
 
     if (parsed.kind === 'IGNORE') {
       this.logger.log(
-        `capture sms ignored user=${userId} reason=internal-transfer card=${parsed.cardLast4 ?? 'none'}`,
+        `capture sms ignored user=${userId} merchant=${parsed.merchant} ` +
+          `card=${parsed.cardLast4 ?? 'none'}`,
       );
       return {
         kind: parsed.kind,
@@ -307,7 +322,7 @@ export class IngestService {
     }
 
     if (parsed.kind === 'REVERSAL') {
-      return this.applyReversal(userId, parsed, reference, account);
+      return this.applyReversal(userId, parsed, reference, account, occurredOn);
     }
 
     if (parsed.kind === 'RECEIVE') {
@@ -341,10 +356,10 @@ export class IngestService {
               parsed.amountMinor,
               parsed.currency,
               userCurrency,
-              parsed.date,
+              occurredOn,
             ),
           ),
-          date: fromIsoDate(parsed.date),
+          date: fromIsoDate(occurredOn),
           // Receipts have no externalRef column, so the key lives here. Ugly,
           // and worth a column of its own the moment a second thing needs one.
           notes: reference,
@@ -371,7 +386,15 @@ export class IngestService {
         amountMinor: parsed.amountMinor,
         currency: parsed.currency,
         merchant: parsed.merchant,
-        date: parsed.date,
+        date: occurredOn,
+        // A foreign purchase states its VAT in riyals while the purchase
+        // itself is in dollars. Two currencies cannot be added into one
+        // amountMinor, so the fee is noted rather than lost — the row stays
+        // truthful about what the bank said, and the few riyals are visible
+        // instead of silently missing.
+        notes: parsed.fee
+          ? `Fees/VAT ${formatMoney(parsed.fee.amountMinor, parsed.fee.currency)}`
+          : undefined,
         reference,
       },
       account,
@@ -401,6 +424,7 @@ export class IngestService {
     parsed: ParsedSms,
     reference: string,
     account: { id: string; name: string; currency: string } | null,
+    occurredOn: string,
   ): Promise<IngestResultDto & { kind: string }> {
     // Already applied? The cancelled row claims the reversal's own reference,
     // and (userId, externalRef) is unique, so there is at most one — a message
@@ -423,7 +447,7 @@ export class IngestService {
       };
     }
 
-    const reversedOn = fromIsoDate(parsed.date);
+    const reversedOn = fromIsoDate(occurredOn);
     // A bank reverses within days. Looking further back would eventually find
     // an unrelated charge of the same amount at the same shop and delete it.
     const earliest = new Date(reversedOn);
