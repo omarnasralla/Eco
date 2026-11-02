@@ -35,6 +35,7 @@ function toDto(
     updatedAt: account.updatedAt.toISOString(),
     createdAt: account.createdAt.toISOString(),
     balanceCardLast4: account.balanceCardLast4,
+    alertChannel: account.alertChannel,
     anchor,
   };
 }
@@ -315,6 +316,7 @@ export class AccountsService {
             ? fromIsoDate(input.openingBalanceDate)
             : new Date(),
           balanceCardLast4: input.balanceCardLast4 ?? null,
+          alertChannel: input.alertChannel ?? null,
           // The first account is primary whether or not the box was ticked:
           // one account and no primary is a state with no useful meaning.
           isPrimary: input.isPrimary || isFirst,
@@ -371,6 +373,9 @@ export class AccountsService {
           // the only value that leaves the link alone.
           ...(input.balanceCardLast4 !== undefined
             ? { balanceCardLast4: input.balanceCardLast4 ?? null }
+            : {}),
+          ...(input.alertChannel !== undefined
+            ? { alertChannel: input.alertChannel || null }
             : {}),
         },
       });

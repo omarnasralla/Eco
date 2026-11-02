@@ -409,6 +409,36 @@ export class NotificationsService implements OnModuleInit {
   }
 
   /**
+   * Money is waiting to be accepted, and expires if it is not.
+   *
+   * The only notification here about money that has NOT moved yet. Neo holds a
+   * person-to-person transfer for three days and cancels it in silence, so the
+   * cost of not saying anything is the whole amount.
+   *
+   * Not deduped: two people sending money on one day are two sums to accept,
+   * and collapsing them would hide one.
+   */
+  async transferNeedsAccepting(
+    userId: string,
+    sender: string,
+    amountMinor: number,
+    currency: string,
+    accountName: string | null,
+  ): Promise<void> {
+    await this.create(userId, {
+      // SYSTEM rather than a type of its own: nothing failed and nothing was
+      // captured — this is a deadline.
+      type: 'SYSTEM',
+      title: `Accept ${formatMoney(amountMinor, currency)} within 3 days`,
+      body:
+        `${sender} sent you ${formatMoney(amountMinor, currency)}` +
+        `${accountName ? ` into ${accountName}` : ''}. ` +
+        `Accept it in the Request tab or it is cancelled.`,
+      actionUrl: '/eco/app/income',
+    });
+  }
+
+  /**
    * A charge was cancelled because the bank reversed it.
    *
    * Worth saying out loud even though nothing needs doing: an expense

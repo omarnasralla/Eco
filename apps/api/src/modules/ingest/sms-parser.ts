@@ -63,6 +63,15 @@ export interface ParsedSms {
    * not mention it at all.
    */
   statedBalanceMinor?: number;
+  /**
+   * The bank channel this message came through, for the formats that name no
+   * card.
+   *
+   * Every other alert identifies its account by the card in it. Neo's
+   * person-to-person notice carries no account identifier at all, so the
+   * account declares the channel instead and this is what it is matched on.
+   */
+  channel?: string;
 }
 
 /**
@@ -154,6 +163,42 @@ const PATTERNS: Array<{ name: string; parse: (text: string) => ParsedSms | null 
                 currency: feeCurrency,
               }
             : null,
+      };
+    },
+  },
+  {
+    // DONIA HARB sent you USD 100.00 on 31/10/2026 at 12:55 PM. "Accept" or
+    // "Reject" via "Request" tab within 3 days or it will be canceled.
+    //
+    // Money from a person, through Neo's transfer requests. RECEIVE, not
+    // TRANSFER: it comes from someone else, not from another pocket of the
+    // user's own.
+    //
+    // It names no card, which is why it carries a channel instead — the only
+    // format here whose account cannot be read from the message.
+    //
+    // The three-day deadline is real and the money is cancelled without it, so
+    // the caller notifies rather than only recording.
+    name: 'neo-request',
+    parse: (text) => {
+      // The sender is lazy and anchored on " sent you", because a name can be
+      // any number of words and is the one field with no label.
+      const m =
+        /^\s*(.+?)\s+sent you\s+([A-Za-z]{3})\s*([\d.,]+)\s+on\s+(\d{1,2})\/(\d{1,2})\/(\d{4})/i.exec(
+          text,
+        );
+      if (!m) return null;
+
+      const currency = m[2]!.toUpperCase();
+      return {
+        kind: 'RECEIVE',
+        amountMinor: parseAmountToMinor(m[3]!, currency),
+        currency,
+        merchant: clean(m[1]!),
+        cardLast4: null,
+        date: iso(m[6]!, m[5]!, m[4]!),
+        fee: null,
+        channel: 'neo-request',
       };
     },
   },

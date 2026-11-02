@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import {
@@ -12,12 +13,13 @@ import {
   TrendingUp,
   Wallet,
 } from 'lucide-react';
-import { formatMoney } from '@eco/shared';
+import { formatMoney, type DashboardMetric } from '@eco/shared';
 import { fetchers, queryKeys } from '@/lib/queries';
 import { useMoneyFormat } from '@/lib/auth-provider';
 import { formatDate, relativeDays } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/page-header';
 import { StatTile } from '@/components/dashboard/stat-tile';
+import { BreakdownDialog } from '@/components/dashboard/breakdown-dialog';
 import { TodayAllowanceCard } from '@/components/dashboard/today-allowance-card';
 import { HealthScoreCard } from '@/components/dashboard/health-score-card';
 import { RecommendationsList } from '@/components/dashboard/recommendations-list';
@@ -33,6 +35,8 @@ const currentMonth = () => new Date().toISOString().slice(0, 7);
 export default function DashboardPage() {
   const { currency, locale } = useMoneyFormat();
   const month = currentMonth();
+  // Which headline figure is open, if any.
+  const [openMetric, setOpenMetric] = useState<DashboardMetric | null>(null);
 
   // Each widget owns its own query so a slow forecast never blocks the
   // headline numbers — the page fills in progressively rather than waiting
@@ -77,12 +81,19 @@ export default function DashboardPage() {
         }
       />
 
+      <BreakdownDialog
+        metric={openMetric}
+        month={month}
+        onClose={() => setOpenMetric(null)}
+      />
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {/* Received, not forecast. What is still owed is named in the hint
             rather than folded into the figure, so the headline is always money
             that exists. */}
         <StatTile
           label="Income"
+          onOpen={() => setOpenMetric('income')}
           valueMinor={data?.totalIncomeMinor ?? 0}
           deltaPct={data?.deltas.incomePct}
           icon={TrendingUp}
@@ -95,6 +106,7 @@ export default function DashboardPage() {
         />
         <StatTile
           label="Spent this month"
+          onOpen={() => setOpenMetric('expenses')}
           valueMinor={data?.totalExpensesMinor ?? 0}
           deltaPct={data?.deltas.expensesPct}
           invertDelta
@@ -108,6 +120,7 @@ export default function DashboardPage() {
             read — a swing from -50 to +50 is not "200% better". */}
         <StatTile
           label="Net cash flow"
+          onOpen={() => setOpenMetric('netCashFlow')}
           valueMinor={data?.netCashFlowMinor ?? 0}
           icon={ArrowLeftRight}
           loading={summary.isLoading}
@@ -119,6 +132,7 @@ export default function DashboardPage() {
         />
         <StatTile
           label="Total debt"
+          onOpen={() => setOpenMetric('debt')}
           valueMinor={data?.totalDebtMinor ?? 0}
           icon={CreditCard}
           loading={summary.isLoading}
@@ -126,6 +140,7 @@ export default function DashboardPage() {
         />
         <StatTile
           label="Cash on hand"
+          onOpen={() => setOpenMetric('cash')}
           valueMinor={data?.totalCashMinor ?? 0}
           icon={Landmark}
           loading={summary.isLoading}
@@ -137,6 +152,7 @@ export default function DashboardPage() {
         />
         <StatTile
           label="Net worth"
+          onOpen={() => setOpenMetric('netWorth')}
           valueMinor={data?.netWorthMinor ?? 0}
           icon={Wallet}
           loading={summary.isLoading}

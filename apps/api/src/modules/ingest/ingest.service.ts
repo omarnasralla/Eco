@@ -282,7 +282,13 @@ export class IngestService {
       );
     }
 
-    const account = await this.accountForCard(userId, parsed.cardLast4);
+    // Most alerts name a card and the card names the account. The one that
+    // names neither carries a channel, and the account declares which channel
+    // is its own — otherwise it would fall back to the primary account, which
+    // is a different bank in a different country.
+    const account = parsed.channel
+      ? await this.accountForChannel(userId, parsed.channel)
+      : await this.accountForCard(userId, parsed.cardLast4);
 
     // An international-purchase alert states no date, so it is filed on the day
     // it arrived — which is the day it was spent, since the alert is immediate.
@@ -373,7 +379,26 @@ export class IngestService {
           notes: reference,
         },
       });
-      this.logger.log(`capture sms received user=${userId} currency=${parsed.currency}`);
+      this.logger.log(
+        `capture sms received user=${userId} currency=${parsed.currency} ` +
+          `channel=${parsed.channel ?? 'card'} account=${account?.name ?? 'none'}`,
+      );
+
+      // Neo holds a transfer for three days and cancels it if nobody accepts.
+      // The receipt is recorded either way — the user said no second message
+      // arrives, so this notice is the only record there will be — but money
+      // that disappears through inattention is worth interrupting someone for.
+      if (parsed.channel === 'neo-request') {
+        void this.notifications
+          .transferNeedsAccepting(
+            userId,
+            parsed.merchant,
+            parsed.amountMinor,
+            parsed.currency,
+            account?.name ?? null,
+          )
+          .catch((e: Error) => this.logger.warn(`Could not notify: ${e.message}`));
+      }
       return {
         kind: parsed.kind,
         expenseId: receipt.id,
@@ -689,6 +714,32 @@ export class IngestService {
       needsReview: false,
       accountName: account?.name ?? null,
     };
+  }
+
+  /**
+   * The account that claims this alert channel.
+   *
+   * Falls back to the card-less path — the primary account — when nothing
+   * claims it, and says so loudly. A wrong account is better than a lost
+   * receipt, but only if it is visible: the money is real either way, and
+   * silently filing it in Beirut when it arrived in Riyadh is the sort of
+   * quiet wrongness this capture path has been bitten by before.
+   */
+  private async accountForChannel(
+    userId: string,
+    channel: string,
+  ): Promise<{ id: string; name: string; currency: string } | null> {
+    const claimed = await this.prisma.financialAccount.findFirst({
+      where: { userId, deletedAt: null, alertChannel: channel },
+      select: { id: true, name: true, currency: true },
+    });
+    if (claimed) return claimed;
+
+    this.logger.warn(
+      `no account claims alert channel "${channel}" for ${userId} — ` +
+        `falling back to the primary account`,
+    );
+    return this.accountForCard(userId, null);
   }
 
   /** The account holding this card, or the primary one when the card is unknown. */

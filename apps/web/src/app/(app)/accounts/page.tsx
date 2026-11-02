@@ -246,6 +246,7 @@ function AccountDialog({
   const [accountCurrency, setAccountCurrency] = useState(baseCurrency);
   const [asOf, setAsOf] = useState(() => new Date().toISOString().slice(0, 10));
   const [balanceCard, setBalanceCard] = useState('');
+  const [alertChannel, setAlertChannel] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -278,6 +279,7 @@ function AccountDialog({
       setAccountCurrency(account.currency);
       setAsOf(account.openingBalanceDate);
       setBalanceCard(account.balanceCardLast4 ?? '');
+      setAlertChannel(account.alertChannel ?? '');
       reset({
         name: account.name,
         kind: account.kind,
@@ -336,6 +338,7 @@ function AccountDialog({
               // Empty means "go back to computing it", which is a real
               // instruction — so it is sent as null rather than omitted.
               balanceCardLast4: balanceCard.length === 4 ? balanceCard : null,
+              alertChannel: alertChannel || null,
             });
           })}
           className="space-y-4"
@@ -424,6 +427,27 @@ function AccountDialog({
                 Last four digits. When this card&apos;s bank texts a balance, that figure becomes
                 this account&apos;s balance and only what you spend afterwards moves it — so a
                 missed capture stops being permanent. Leave empty to add movements up instead.
+              </p>
+            </div>
+          ) : null}
+
+          {/* The one bank whose alerts name no card at all. Without this the
+              money lands in the primary account, which is another bank in
+              another country. */}
+          {editing ? (
+            <div className="space-y-2">
+              <Label htmlFor="account-alert-channel">Bank alerts without a card number</Label>
+              <Input
+                id="account-alert-channel"
+                placeholder="neo-request"
+                maxLength={32}
+                value={alertChannel}
+                onChange={(e) => setAlertChannel(e.target.value.trim())}
+              />
+              <p className="text-xs text-muted-foreground">
+                Most bank messages name the card, which is how Eco knows the account. For a bank
+                that names none — Neo&apos;s &ldquo;sent you&rdquo; transfers — put its channel here
+                so that money lands in this account. Leave empty unless you know you need it.
               </p>
             </div>
           ) : null}

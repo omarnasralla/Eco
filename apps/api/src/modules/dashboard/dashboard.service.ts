@@ -13,6 +13,9 @@ import {
   type DashboardSummaryDto,
   type TrendPointDto,
   type UpcomingBillDto,
+  type BreakdownLineDto,
+  type DashboardBreakdownDto,
+  type DashboardMetric,
 } from '@eco/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
@@ -20,7 +23,7 @@ import { IncomeService } from '../income/income.service';
 import { AccountsService } from '../accounts/accounts.service';
 import { GoalsService } from '../goals/goals.service';
 import { toNumber } from '../../common/utils/money';
-import { monthToDate, todayIso } from '../../common/utils/dates';
+import { monthToDate, requireIsoDate, todayIso } from '../../common/utils/dates';
 import { CurrencyService } from '../currency/currency.service';
 
 @Injectable()
@@ -346,6 +349,157 @@ export class DashboardService {
   }
 
   // ── Internals ───────────────────────────────────────────────────────────
+
+  /**
+   * How a headline figure was reached.
+   *
+   * Every card on the dashboard is a single number standing for a lot of rows,
+   * and a number you cannot take apart is a number you cannot check — "income
+   * $4,313.33" looked wrong and was, but only because it could be opened up.
+   * So each metric explains itself from the same data the card is computed
+   * from, and the lines are made to add to the total: a remainder is shown
+   * rather than letting a breakdown quietly disagree with the figure above it.
+   */
+  async breakdown(
+    userId: string,
+    userCurrency: string,
+    metric: DashboardMetric,
+    month: string,
+  ): Promise<DashboardBreakdownDto> {
+    const from = monthToDate(month);
+    const to = monthToDate(addMonths(month, 1));
+    const base = { metric, month, currency: userCurrency };
+
+    // Money as it actually sits, named only when it differs from the base
+    // currency — "SAR 1,822.41" beside "$485.98" explains a figure that
+    // otherwise looks invented.
+    const native = (minor: number, currency: string) =>
+      currency === userCurrency ? null : `${currency} ${(minor / 100).toFixed(2)}`;
+
+    if (metric === 'income') {
+      const receipts = await this.prisma.incomeReceipt.findMany({
+        where: { userId, date: { gte: from, lt: to } },
+        orderBy: { date: 'asc' },
+        include: { incomeSource: { select: { name: true } } },
+      });
+      const lines: BreakdownLineDto[] = receipts.map((r) => ({
+        label: r.name ?? r.incomeSource?.name ?? 'Income',
+        amountMinor: toNumber(r.baseAmountMinor),
+        nativeLabel: native(toNumber(r.amountMinor), r.currency),
+        detail: requireIsoDate(r.date),
+      }));
+      return {
+        ...base,
+        totalMinor: lines.reduce((sum, l) => sum + l.amountMinor, 0),
+        lines,
+        note:
+          'Money you were paid. Transfers between your own accounts, cash put in and ' +
+          'people settling up are not income and are left out.',
+      };
+    }
+
+    if (metric === 'expenses') {
+      const rows = await this.spendByCategoryWithMeta(userId, month);
+      const lines: BreakdownLineDto[] = rows
+        .map((r) => ({
+          label: r.categoryName,
+          amountMinor: r.amountMinor,
+          nativeLabel: null,
+          detail: null,
+        }))
+        .sort((a, b) => b.amountMinor - a.amountMinor);
+      return {
+        ...base,
+        totalMinor: await this.totalExpenses(userId, month),
+        lines,
+        note: 'By category. A transfer to another of your accounts is not spending.',
+      };
+    }
+
+    if (metric === 'netCashFlow') {
+      const income = await this.income.incomeBreakdownByMonth(userId, userCurrency, [month]);
+      const received = income.get(month)?.received ?? 0;
+      const spent = await this.totalExpenses(userId, month);
+      return {
+        ...base,
+        totalMinor: received - spent,
+        lines: [
+          { label: 'Income received', amountMinor: received, nativeLabel: null, detail: null },
+          { label: 'Spent', amountMinor: -spent, nativeLabel: null, detail: null },
+        ],
+        note: 'Received, not expected. Pay that has not landed is money you do not have.',
+      };
+    }
+
+    if (metric === 'debt') {
+      const debts = await this.prisma.debt.findMany({
+        where: { userId, deletedAt: null, isClosed: false },
+        select: { name: true, currentBalanceMinor: true, currency: true },
+        orderBy: { currentBalanceMinor: 'desc' },
+      });
+      const lines: BreakdownLineDto[] = [];
+      for (const d of debts) {
+        lines.push({
+          label: d.name,
+          amountMinor: await this.currency.convertForDisplay(
+            toNumber(d.currentBalanceMinor),
+            d.currency,
+            userCurrency,
+          ),
+          nativeLabel: native(toNumber(d.currentBalanceMinor), d.currency),
+          detail: null,
+        });
+      }
+      return {
+        ...base,
+        totalMinor: lines.reduce((sum, l) => sum + l.amountMinor, 0),
+        lines,
+        // Not a month figure at all, and saying so stops it being read as one.
+        note: 'What is outstanding now, not what moved this month. Closed debts are left out.',
+      };
+    }
+
+    if (metric === 'cash') {
+      const accounts = await this.accounts.findAll(userId);
+      const lines: BreakdownLineDto[] = [];
+      for (const a of accounts) {
+        lines.push({
+          label: a.name,
+          amountMinor: await this.currency.convertForDisplay(
+            a.balanceMinor,
+            a.currency,
+            userCurrency,
+          ),
+          nativeLabel: native(a.balanceMinor, a.currency),
+          detail: a.anchor
+            ? `bank figure for ···${a.anchor.cardLast4}, ${a.anchor.asOf}`
+            : `${a.movementCount} movement${a.movementCount === 1 ? '' : 's'} since ${a.openingBalanceDate}`,
+        });
+      }
+      return {
+        ...base,
+        totalMinor: lines.reduce((sum, l) => sum + l.amountMinor, 0),
+        lines,
+        note: 'Every account, converted at today\'s rate. A balance is a position held now.',
+      };
+    }
+
+    const [cash, savings, debt] = await Promise.all([
+      this.accounts.totalBalance(userId, userCurrency),
+      this.goals.totalSaved(userId, userCurrency),
+      this.totalDebt(userId, userCurrency),
+    ]);
+    return {
+      ...base,
+      totalMinor: cash + savings - debt,
+      lines: [
+        { label: 'Cash on hand', amountMinor: cash, nativeLabel: null, detail: null },
+        { label: 'Savings', amountMinor: savings, nativeLabel: null, detail: null },
+        { label: 'Debt', amountMinor: -debt, nativeLabel: null, detail: null },
+      ],
+      note: 'What you hold less what you owe, as of now.',
+    };
+  }
 
   private async totalExpenses(userId: string, month: string): Promise<number> {
     const result = await this.prisma.expense.aggregate({

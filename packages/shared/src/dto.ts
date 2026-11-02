@@ -686,6 +686,8 @@ export interface AccountDto {
   balanceCardLast4: string | null;
   /** Present only while anchored, and only once that card has stated a balance. */
   anchor: BalanceAnchorDto | null;
+  /** The bank alert channel whose card-less messages land in this account. */
+  alertChannel: string | null;
 }
 
 /** What the bank last said this account held, and what has happened since. */
@@ -795,6 +797,45 @@ export interface BalanceFlowDto {
   closingOn: string | null;
   /** Movements with no prior balance to check against; totals exclude them. */
   blindSteps: number;
+}
+
+/** Which headline figure a breakdown explains. */
+export type DashboardMetric =
+  | 'income'
+  | 'expenses'
+  | 'netCashFlow'
+  | 'debt'
+  | 'cash'
+  | 'netWorth';
+
+/** One contributor to a headline figure. */
+export interface BreakdownLineDto {
+  label: string;
+  /** In the user's base currency, signed as it affects the total. */
+  amountMinor: number;
+  /**
+   * The same money as it actually sits, when that differs — an account held in
+   * riyals, a receipt in another currency. Null when there is nothing to add.
+   */
+  nativeLabel: string | null;
+  /** Where it came from, or what it is. */
+  detail: string | null;
+}
+
+/**
+ * How a headline figure was reached.
+ *
+ * The lines add to `totalMinor`, so a figure that cannot be explained shows a
+ * remainder rather than quietly disagreeing with the card above it.
+ */
+export interface DashboardBreakdownDto {
+  metric: DashboardMetric;
+  month: string;
+  currency: string;
+  totalMinor: number;
+  lines: BreakdownLineDto[];
+  /** What the figure deliberately leaves out, when something is left out. */
+  note: string | null;
 }
 
 export interface AccountsSummaryDto {

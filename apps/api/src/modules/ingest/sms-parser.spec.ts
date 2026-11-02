@@ -275,6 +275,53 @@ Don't share the code`;
     expect(parseTransactionSms(MAIN)?.date).toBe('2026-09-28');
   });
 
+  /**
+   * The real Neo notice, verbatim. It names a sender and no card at all, which
+   * is why it is the one format that carries a channel instead.
+   */
+  const NEO_REQUEST =
+    'DONIA HARB sent you USD 100.00 on 31/10/2026 at 12:55 PM. "Accept" or "Reject" ' +
+    'via "Request" tab within 3 days or it will be canceled.';
+
+  it('reads money sent by a person through Neo', () => {
+    expect(parseTransactionSms(NEO_REQUEST)).toEqual({
+      kind: 'RECEIVE',
+      amountMinor: 10000,
+      currency: 'USD',
+      merchant: 'DONIA HARB',
+      // No card anywhere in the message — the account is found by channel.
+      cardLast4: null,
+      date: '2026-10-31',
+      fee: null,
+      channel: 'neo-request',
+    });
+  });
+
+  it('keeps a sender name of any length', () => {
+    // Anchored on " sent you", because a name has no label and no fixed word
+    // count — the only thing that reliably ends it is the phrase after it.
+    expect(parseTransactionSms(NEO_REQUEST.replace('DONIA HARB', 'PIERRE'))?.merchant).toBe(
+      'PIERRE',
+    );
+    expect(
+      parseTransactionSms(NEO_REQUEST.replace('DONIA HARB', 'JEAN PAUL EL KHOURY'))?.merchant,
+    ).toBe('JEAN PAUL EL KHOURY');
+  });
+
+  it('reads it as money arriving, not as money moved between your own accounts', () => {
+    // It comes from another person, so RECEIVE. A top up comes from another
+    // pocket of your own, so TRANSFER. Confusing the two would either invent
+    // income or lose it.
+    expect(parseTransactionSms(NEO_REQUEST)?.kind).toBe('RECEIVE');
+    expect(parseTransactionSms(TOPUP)?.kind).toBe('TRANSFER');
+  });
+
+  it('reads the day-first date, not the month', () => {
+    // 31/10 can only be the 31st of October; a month-first reading has no
+    // 31st month, and this is the format that proves which rule applies.
+    expect(parseTransactionSms(NEO_REQUEST)?.date).toBe('2026-10-31');
+  });
+
   it('refuses an urpay message whose type it has never seen', () => {
     const unknown = `Salary Credited
 At:EMPLOYER

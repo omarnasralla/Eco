@@ -524,6 +524,14 @@ export const accountSchema = z.object({
     .trim()
     .regex(/^\d{4}$/, 'Four digits')
     .nullish(),
+  /**
+   * The bank alert channel whose card-less messages belong here.
+   *
+   * Every other alert names a card and the card names the account. Neo's
+   * person-to-person notice names neither, so the account claims the channel
+   * instead. Null to stop claiming it.
+   */
+  alertChannel: z.string().trim().max(32).nullish(),
 });
 
 export const updateAccountSchema = accountSchema.partial();

@@ -1,5 +1,6 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { DashboardMetric } from '@eco/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { DashboardService } from './dashboard.service';
 
@@ -15,6 +16,21 @@ export class DashboardController {
     @Query('month') month?: string,
   ) {
     return this.dashboard.summary(user.id, user.currency, month);
+  }
+
+  @Get('breakdown')
+  @ApiOperation({ summary: 'How one headline figure was reached, line by line' })
+  async breakdown(
+    @CurrentUser() user: { id: string; currency: string },
+    @Query('metric') metric: DashboardMetric,
+    @Query('month') month?: string,
+  ) {
+    return this.dashboard.breakdown(
+      user.id,
+      user.currency,
+      metric,
+      month ?? new Date().toISOString().slice(0, 7),
+    );
   }
 
   @Get('trend')

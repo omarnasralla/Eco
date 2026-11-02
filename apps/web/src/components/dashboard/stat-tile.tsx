@@ -28,6 +28,7 @@ export function StatTile({
   hint,
   loading = false,
   className,
+  onOpen,
 }: {
   label: string;
   valueMinor: number;
@@ -37,6 +38,15 @@ export function StatTile({
   hint?: string;
   loading?: boolean;
   className?: string;
+  /**
+   * Makes the tile open its own breakdown.
+   *
+   * A headline figure you cannot take apart is a figure you cannot check —
+   * "income $4,313.33" looked wrong and was, but only because it could be
+   * opened. Tiles without one stay plain cards rather than pretending to be
+   * interactive.
+   */
+  onOpen?: () => void;
 }) {
   const { currency, locale } = useMoneyFormat();
   const theme = useChartTheme();
@@ -55,8 +65,8 @@ export function StatTile({
   const rising = (deltaPct ?? 0) > 0;
   const good = invertDelta ? !rising : rising;
 
-  return (
-    <Card className={cn('p-4', className)}>
+  const body = (
+    <>
       <div className="flex items-start justify-between gap-2">
         <p className="text-sm text-muted-foreground">{label}</p>
         {Icon ? <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden /> : null}
@@ -80,6 +90,23 @@ export function StatTile({
       ) : hint ? (
         <p className="mt-1.5 text-xs text-muted-foreground">{hint}</p>
       ) : null}
+    </>
+  );
+
+  if (!onOpen) return <Card className={cn('p-4', className)}>{body}</Card>;
+
+  // A real button, not a card with a click handler: the figure has to be
+  // reachable by keyboard and announced as something that opens.
+  return (
+    <Card className={cn('p-0', className)}>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`${label}: show how this is worked out`}
+        className="w-full rounded-[inherit] p-4 text-left transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
+      >
+        {body}
+      </button>
     </Card>
   );
 }
