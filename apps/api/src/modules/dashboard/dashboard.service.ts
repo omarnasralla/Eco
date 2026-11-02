@@ -22,6 +22,7 @@ import { RedisService } from '../../redis/redis.service';
 import { IncomeService } from '../income/income.service';
 import { AccountsService } from '../accounts/accounts.service';
 import { GoalsService } from '../goals/goals.service';
+import { ReceivablesService } from '../receivables/receivables.service';
 import { toNumber } from '../../common/utils/money';
 import { monthToDate, requireIsoDate, todayIso } from '../../common/utils/dates';
 import { CurrencyService } from '../currency/currency.service';
@@ -33,6 +34,7 @@ export class DashboardService {
     private readonly redis: RedisService,
     private readonly income: IncomeService,
     private readonly goals: GoalsService,
+    private readonly receivables: ReceivablesService,
     private readonly accounts: AccountsService,
     private readonly currency: CurrencyService,
   ) {}
@@ -61,6 +63,7 @@ export class DashboardService {
         totalCash,
         goalCounts,
         upcomingBills,
+        owedToUser,
       ] = await Promise.all([
         this.totalExpenses(userId, targetMonth),
         this.totalExpenses(userId, previousMonth),
@@ -74,6 +77,10 @@ export class DashboardService {
         this.accounts.totalBalance(userId, userCurrency),
         this.goalCounts(userId),
         this.upcomingBills(userId, 14),
+        // Money lent out is still the user's money, in someone else's hands.
+        // Left out, net worth drops by the whole loan the moment it is made,
+        // which reports a loss where nothing was lost.
+        this.receivables.totalOutstanding(userId, userCurrency),
       ]);
 
       // Received only. Salary that has not landed yet is money the user does
@@ -121,7 +128,7 @@ export class DashboardService {
       // Still deliberately excludes illiquid assets — property and pensions are
       // not tracked, and a partial figure presented as "net worth" would
       // mislead in the flattering direction.
-      const netWorthMinor = totalCash + totalSavings - totalDebt;
+      const netWorthMinor = totalCash + totalSavings + owedToUser - totalDebt;
 
       const budget = await this.currentBudgetUtilisation(userId, targetMonth);
 
@@ -138,6 +145,7 @@ export class DashboardService {
         totalDebtMinor: totalDebt,
         totalSavingsMinor: totalSavings,
         totalCashMinor: totalCash,
+        owedToUserMinor: owedToUser,
         netWorthMinor,
         deltas: {
           incomePct: this.percentChange(incomePrev, incomeThis),
@@ -484,20 +492,24 @@ export class DashboardService {
       };
     }
 
-    const [cash, savings, debt] = await Promise.all([
+    const [cash, savings, debt, owed] = await Promise.all([
       this.accounts.totalBalance(userId, userCurrency),
       this.goals.totalSaved(userId, userCurrency),
       this.totalDebt(userId, userCurrency),
+      this.receivables.totalOutstanding(userId, userCurrency),
     ]);
     return {
       ...base,
-      totalMinor: cash + savings - debt,
+      totalMinor: cash + savings + owed - debt,
       lines: [
         { label: 'Cash on hand', amountMinor: cash, nativeLabel: null, detail: null },
         { label: 'Savings', amountMinor: savings, nativeLabel: null, detail: null },
+        { label: 'Owed to you', amountMinor: owed, nativeLabel: null, detail: null },
         { label: 'Debt', amountMinor: -debt, nativeLabel: null, detail: null },
       ],
-      note: 'What you hold less what you owe, as of now.',
+      note:
+        'What you hold, plus what people owe you, less what you owe. ' +
+        'Property and pensions are not tracked.',
     };
   }
 

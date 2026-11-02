@@ -24,6 +24,7 @@ import { formatDate } from '@/lib/utils';
 import { useChartTheme } from '@/components/charts/chart-theme';
 import { PayoffChart } from '@/components/charts/payoff-chart';
 import { PageHeader } from '@/components/layout/page-header';
+import { LentOutCard } from '@/components/debts/lent-out-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -398,6 +399,12 @@ export default function DebtsPage() {
           refreshAll();
         }}
       />
+
+      {/* The same question pointed the other way, and kept on this page so it
+          is obvious that one offsets the other. */}
+      <div className="mt-6">
+        <LentOutCard />
+      </div>
 
       <PaymentDialog
         key={payingOff?.id ?? 'none-pay'}

@@ -161,6 +161,59 @@ model Transfer {
   @@map("transfers")
 }
 
+/// Money lent to a person, and what has come back.
+///
+/// The mirror of Debt: a debt lowers net worth, a receivable raises it. Not an
+/// expense — 2,000 lent out of a 2,400 withdrawal is still the user's money,
+/// in someone else's hands.
+///
+/// No interest, schedule or due day on purpose: these are loans between
+/// friends, and inventing an APR for them asks a question nobody can answer.
+model Receivable {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @db.Uuid
+  person         String    @db.VarChar(120)
+  principalMinor BigInt
+  currency       String    @db.Char(3)
+  lentOn         DateTime  @db.Date
+  accountId      String?   @db.Uuid
+  note           String?   @db.VarChar(300)
+  /// Set when the user calls it done, repaid in full or written off.
+  settledAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  user     User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  FinancialAccount?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  payments ReceivablePayment[]
+
+  @@index([userId, settledAt, deletedAt])
+  @@map("receivables")
+}
+
+/// One repayment against a receivable. Rows, not a running balance, so the
+/// outstanding figure is derived and an edit moves it by exactly what it moved.
+model ReceivablePayment {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  receivableId String   @db.Uuid
+  amountMinor  BigInt
+  currency     String   @db.Char(3)
+  date         DateTime @db.Date
+  accountId    String?  @db.Uuid
+  note         String?  @db.VarChar(300)
+  createdAt    DateTime @default(now())
+
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  receivable Receivable        @relation(fields: [receivableId], references: [id], onDelete: Cascade)
+  account    FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([receivableId, date])
+  @@index([accountId, date])
+  @@map("receivable_payments")
+}
+
 enum NotificationType {
   BILL_DUE
   BUDGET_EXCEEDED
@@ -315,6 +368,8 @@ model User {
   plannedPurchases       PlannedPurchase[]
   balanceCheckpoints     BalanceCheckpoint[]
   transfers              Transfer[]
+  receivables            Receivable[]
+  receivablePayments     ReceivablePayment[]
 
   @@index([deletedAt])
   @@map("users")
@@ -495,6 +550,8 @@ model FinancialAccount {
   checkpoints   BalanceCheckpoint[]
   transfersOut  Transfer[]        @relation("TransfersOut")
   transfersIn   Transfer[]        @relation("TransfersIn")
+  receivables         Receivable[]
+  receivablePayments  ReceivablePayment[]
   contributions GoalContribution[]
   debts         Debt[]
   debtPayments  DebtPayment[]

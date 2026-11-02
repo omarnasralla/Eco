@@ -493,6 +493,39 @@ export type AdminUserQuery = z.infer<typeof adminUserQuerySchema>;
 
 /* ── Accounts ─────────────────────────────────────────────── */
 
+/** Money lent to a person. */
+export const receivableSchema = z.object({
+  person: z.string().trim().min(1).max(120),
+  /** Always positive: the direction is the table, not the sign. */
+  amountMinor: z.number().int().positive(),
+  currency: currencyCode,
+  lentOn: isoDate,
+  /** The account it left, so the balance can account for it. */
+  accountId: uuid.nullish(),
+  note: z.string().trim().max(300).nullish(),
+});
+
+export const updateReceivableSchema = receivableSchema.partial().extend({
+  /**
+   * Call it done. A loan written off is settled too — leaving it outstanding
+   * for ever would quietly inflate net worth.
+   */
+  settled: z.boolean().optional(),
+});
+
+/** One repayment coming back. */
+export const receivablePaymentSchema = z.object({
+  amountMinor: z.number().int().positive(),
+  currency: currencyCode.optional(),
+  date: isoDate.optional(),
+  accountId: uuid.nullish(),
+  note: z.string().trim().max(300).nullish(),
+});
+
+export type ReceivableInput = z.infer<typeof receivableSchema>;
+export type UpdateReceivableInput = z.infer<typeof updateReceivableSchema>;
+export type ReceivablePaymentInput = z.infer<typeof receivablePaymentSchema>;
+
 export const accountSchema = z.object({
   name: z.string().trim().min(1).max(120),
   kind: z.enum(ACCOUNT_KINDS),

@@ -410,6 +410,8 @@ export interface DashboardSummaryDto {
   totalSavingsMinor: number;
   /** Cash across all accounts, in the base currency. */
   totalCashMinor: number;
+  /** Still owed to the user by other people, in the base currency. */
+  owedToUserMinor: number;
   netWorthMinor: number;
   /** Percentage change against the previous equivalent period. */
   deltas: {
@@ -836,6 +838,54 @@ export interface DashboardBreakdownDto {
   lines: BreakdownLineDto[];
   /** What the figure deliberately leaves out, when something is left out. */
   note: string | null;
+}
+
+/** One repayment against money lent out. */
+export interface ReceivablePaymentDto {
+  id: string;
+  amountMinor: number;
+  currency: string;
+  date: string;
+  accountId: string | null;
+  accountName: string | null;
+  note: string | null;
+}
+
+/**
+ * Money lent to a person.
+ *
+ * `outstandingMinor` is derived from the payments, never stored, so editing or
+ * deleting a repayment moves it by exactly what that repayment moved.
+ */
+export interface ReceivableDto {
+  id: string;
+  person: string;
+  principalMinor: number;
+  currency: string;
+  lentOn: string;
+  accountId: string | null;
+  accountName: string | null;
+  note: string | null;
+  repaidMinor: number;
+  outstandingMinor: number;
+  /** Repaid as a share of the principal, 0–100. */
+  repaidPct: number;
+  /** True once called done — repaid in full or written off. */
+  settled: boolean;
+  settledAt: string | null;
+  payments: ReceivablePaymentDto[];
+}
+
+/** Everything lent out, and what is still owed. */
+export interface ReceivablesSummaryDto {
+  /** In the user's base currency. */
+  outstandingMinor: number;
+  lentMinor: number;
+  repaidMinor: number;
+  currency: string;
+  /** How many people still owe something. */
+  peopleOwing: number;
+  items: ReceivableDto[];
 }
 
 export interface AccountsSummaryDto {
