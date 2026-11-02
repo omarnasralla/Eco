@@ -332,7 +332,7 @@ export class IngestService {
     }
 
     if (parsed.kind === 'BALANCE') {
-      return this.recordCheckpoint(userId, parsed, reference, account, occurredOn);
+      return this.recordCheckpoint(userId, userCurrency, parsed, reference, account, occurredOn);
     }
 
     if (parsed.kind === 'REVERSAL') {
@@ -654,6 +654,7 @@ export class IngestService {
    */
   private async recordCheckpoint(
     userId: string,
+    userCurrency: string,
     parsed: ParsedSms,
     reference: string,
     account: { id: string; name: string; currency: string } | null,
@@ -696,24 +697,86 @@ export class IngestService {
         externalRef: reference,
       },
     });
+
+    // Money that left for somewhere outside the accounts being tracked is
+    // spent. A top-up is not — it moves between two of the user's own pockets,
+    // and the wallet's own alerts already record what it buys — but a counter
+    // withdrawal is money gone, and recording only the balance left $2,400
+    // leaving an account with nothing in the ledger to show for it.
+    //
+    // Dated the same day as the alert, which is also why it cannot
+    // double-count: the stated balance already includes it, and an anchored
+    // balance applies movements only from the day AFTER. So the expense exists
+    // for cash flow and category totals without disturbing the balance.
+    const internal = await this.isOwnAccount(userId, parsed.merchant, account?.id);
+    const spend = internal
+      ? null
+      : await this.capture(
+          userId,
+          userCurrency,
+          {
+            amountMinor: parsed.amountMinor,
+            currency: parsed.currency,
+            merchant: parsed.merchant,
+            date: occurredOn,
+            // A different key from the checkpoint's: one message produces two
+            // rows and they must not collide on the unique index.
+            reference: `${reference}:spend`,
+          },
+          account,
+        );
+
     await this.redis.invalidateUser(userId);
 
     this.logger.log(
       `balance checkpoint user=${userId} card=${parsed.cardLast4 ?? 'none'} ` +
-        `amount=${parsed.amountMinor} ${parsed.currency} balance=${stated} on=${occurredOn}`,
+        `amount=${parsed.amountMinor} ${parsed.currency} balance=${stated} on=${occurredOn} ` +
+        `spent=${internal ? 'no-internal' : 'yes'}`,
     );
 
     return {
       kind: parsed.kind,
-      expenseId: row.id,
+      // The expense when one was created, so the shortcut's reply points at
+      // the row the user can actually edit.
+      expenseId: spend?.expenseId ?? row.id,
       duplicate: false,
       amountMinor: parsed.amountMinor,
       currency: parsed.currency,
       merchant: parsed.merchant,
-      categoryName: '—',
-      needsReview: false,
+      categoryName: spend?.categoryName ?? '—',
+      needsReview: spend?.needsReview ?? false,
       accountName: account?.name ?? null,
     };
+  }
+
+  /**
+   * Whether this merchant is one of the user's own accounts.
+   *
+   * A bank writes the destination into the merchant field, so a top-up reads
+   * "URPAYRIYADH SA" — the wallet's name with a city stuck to it. Matched as a
+   * substring for that reason, and only against OTHER accounts: the alert's
+   * own account always matches itself and would make every withdrawal look
+   * internal.
+   *
+   * Names under four characters are skipped. "Neo" would match NEON SIGNS and
+   * quietly turn a purchase into a transfer — and a transfer mistaken for a
+   * purchase is cosmetic, where a purchase mistaken for a transfer is a wrong
+   * total.
+   */
+  private async isOwnAccount(
+    userId: string,
+    merchant: string,
+    exceptAccountId?: string,
+  ): Promise<boolean> {
+    const accounts = await this.prisma.financialAccount.findMany({
+      where: { userId, deletedAt: null },
+      select: { id: true, name: true },
+    });
+    const haystack = merchant.toLowerCase();
+    return accounts.some(
+      (a) =>
+        a.id !== exceptAccountId && a.name.length >= 4 && haystack.includes(a.name.toLowerCase()),
+    );
   }
 
   /**
