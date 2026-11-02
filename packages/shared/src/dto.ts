@@ -679,6 +679,30 @@ export interface AccountDto {
   /** When the balance was last set, so a stale figure can be seen to be stale. */
   updatedAt: string;
   createdAt: string;
+  /**
+   * The card whose bank-stated balance this account is read from, or null when
+   * the balance is computed from movements alone.
+   */
+  balanceCardLast4: string | null;
+  /** Present only while anchored, and only once that card has stated a balance. */
+  anchor: BalanceAnchorDto | null;
+}
+
+/** What the bank last said this account held, and what has happened since. */
+export interface BalanceAnchorDto {
+  cardLast4: string;
+  /** The balance the bank stated, exactly as received. */
+  statedBalanceMinor: number;
+  /** The date of the message it was stated in. */
+  asOf: string;
+  /** Movements recorded after that date, in the account's currency. */
+  movementsSinceMinor: number;
+  /**
+   * What the balance would be from movements alone — the old figure. Kept so
+   * the two can be compared: a wide gap means captures are being missed, and
+   * that is worth seeing rather than quietly correcting.
+   */
+  computedBalanceMinor: number;
 }
 
 /**

@@ -511,6 +511,19 @@ export const accountSchema = z.object({
    */
   openingBalanceDate: isoDate.optional(),
   isPrimary: z.boolean().default(false),
+  /**
+   * Read this account's balance from the bank's own alerts for this card
+   * instead of adding movements up.
+   *
+   * Four digits, or null to go back to computing it. The card need not be in
+   * `cardsLast4` — the list says which card's purchases land here, and the
+   * account whose BALANCE a card reports is not always the same one.
+   */
+  balanceCardLast4: z
+    .string()
+    .trim()
+    .regex(/^\d{4}$/, 'Four digits')
+    .nullish(),
 });
 
 export const updateAccountSchema = accountSchema.partial();

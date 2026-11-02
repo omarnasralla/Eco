@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Loader2, Pencil, Plus, Scale, Star, Trash2 } from 'lucide-react';
+import { Link2, Loader2, Pencil, Plus, Scale, Star, Trash2 } from 'lucide-react';
 import {
   ACCOUNT_KINDS,
   ACCOUNT_KIND_LABELS,
@@ -127,9 +127,14 @@ export default function AccountsPage() {
                         </p>
                         <p className="truncate text-xs text-muted-foreground">
                           {ACCOUNT_KIND_LABELS[account.kind]} ·{' '}
-                          {account.movementCount > 0
-                            ? `${account.movementCount} transaction${account.movementCount === 1 ? '' : 's'} since ${formatDate(account.openingBalanceDate, locale)}`
-                            : `set ${formatDate(account.openingBalanceDate, locale)}`}
+                          {/* An anchored balance came from the bank, so saying
+                              how many transactions built it would be a lie —
+                              they did not build it, they only moved it since. */}
+                          {account.anchor
+                            ? `bank figure for ···${account.anchor.cardLast4}, ${formatDate(account.anchor.asOf, locale)}`
+                            : account.movementCount > 0
+                              ? `${account.movementCount} transaction${account.movementCount === 1 ? '' : 's'} since ${formatDate(account.openingBalanceDate, locale)}`
+                              : `set ${formatDate(account.openingBalanceDate, locale)}`}
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
@@ -144,6 +149,12 @@ export default function AccountsPage() {
                         </p>
                         {account.currency !== currency ? (
                           <p className="text-xs text-muted-foreground">{account.currency}</p>
+                        ) : null}
+                        {account.anchor ? (
+                          <p className="flex items-center justify-end gap-1 text-xs text-muted-foreground">
+                            <Link2 className="size-3" aria-hidden />
+                            ···{account.anchor.cardLast4}
+                          </p>
                         ) : null}
                       </div>
                       <Pencil className="size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -234,6 +245,7 @@ function AccountDialog({
   const [balance, setBalance] = useState('');
   const [accountCurrency, setAccountCurrency] = useState(baseCurrency);
   const [asOf, setAsOf] = useState(() => new Date().toISOString().slice(0, 10));
+  const [balanceCard, setBalanceCard] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -265,6 +277,7 @@ function AccountDialog({
       setBalance(String(toMajorUnits(account.openingBalanceMinor, account.currency)));
       setAccountCurrency(account.currency);
       setAsOf(account.openingBalanceDate);
+      setBalanceCard(account.balanceCardLast4 ?? '');
       reset({
         name: account.name,
         kind: account.kind,
@@ -316,7 +329,14 @@ function AccountDialog({
         <form
           onSubmit={handleSubmit((values) => {
             setFormError(null);
-            save.mutate({ ...values, currency: accountCurrency, openingBalanceDate: asOf });
+            save.mutate({
+              ...values,
+              currency: accountCurrency,
+              openingBalanceDate: asOf,
+              // Empty means "go back to computing it", which is a real
+              // instruction — so it is sent as null rather than omitted.
+              balanceCardLast4: balanceCard.length === 4 ? balanceCard : null,
+            });
           })}
           className="space-y-4"
           noValidate
@@ -384,6 +404,29 @@ function AccountDialog({
               the balance up.
             </p>
           </div>
+
+          {/* The balance can come from the bank instead of from adding
+              movements up. Offered only when editing: a card has to have texted
+              a balance before linking to it means anything, and that cannot be
+              true of an account being created. */}
+          {editing ? (
+            <div className="space-y-2">
+              <Label htmlFor="account-balance-card">Read the balance from a card</Label>
+              <Input
+                id="account-balance-card"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="0115"
+                value={balanceCard}
+                onChange={(e) => setBalanceCard(e.target.value.replace(/\D/g, '').slice(0, 4))}
+              />
+              <p className="text-xs text-muted-foreground">
+                Last four digits. When this card&apos;s bank texts a balance, that figure becomes
+                this account&apos;s balance and only what you spend afterwards moves it — so a
+                missed capture stops being permanent. Leave empty to add movements up instead.
+              </p>
+            </div>
+          ) : null}
 
           <label className="flex items-center gap-2 text-sm">
             <input

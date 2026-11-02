@@ -13,9 +13,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { CurrencyService } from '../currency/currency.service';
 import { toNumber } from '../../common/utils/money';
+import type { BalanceAnchorDto } from '@eco/shared';
 import { fromIsoDate, requireIsoDate, todayIso } from '../../common/utils/dates';
 
-function toDto(account: FinancialAccount, balanceMinor: number, movements: number): AccountDto {
+function toDto(
+  account: FinancialAccount,
+  balanceMinor: number,
+  movements: number,
+  anchor: BalanceAnchorDto | null = null,
+): AccountDto {
   return {
     id: account.id,
     name: account.name,
@@ -28,6 +34,8 @@ function toDto(account: FinancialAccount, balanceMinor: number, movements: numbe
     isPrimary: account.isPrimary,
     updatedAt: account.updatedAt.toISOString(),
     createdAt: account.createdAt.toISOString(),
+    balanceCardLast4: account.balanceCardLast4,
+    anchor,
   };
 }
 
@@ -68,7 +76,47 @@ export class AccountsService {
    */
   private async withBalance(account: FinancialAccount): Promise<AccountDto> {
     const { net, count } = await this.movementsSince(account);
-    return toDto(account, toNumber(account.openingBalanceMinor) + net, count);
+    const computed = toNumber(account.openingBalanceMinor) + net;
+    if (!account.balanceCardLast4) return toDto(account, computed, count);
+
+    // The newest balance this card's bank has stated. Ordered the same way the
+    // chain is read, so "newest" cannot disagree between the two screens.
+    const latest = await this.prisma.balanceCheckpoint.findFirst({
+      where: { userId: account.userId, cardLast4: account.balanceCardLast4 },
+      orderBy: [{ occurredOn: 'desc' }, { createdAt: 'desc' }],
+    });
+    // Linked, but that card has never stated one. The computed figure is all
+    // there is, and claiming an anchor that does not exist would be worse.
+    if (!latest) return toDto(account, computed, count);
+
+    // Everything up to and including the message's date is already inside the
+    // figure the bank stated, so only the day AFTER it onwards is applied. A
+    // movement recorded later on the same day is the known imprecision here:
+    // expenses carry a date, not a time, so there is nothing to order them by
+    // within the day. The next alert corrects it.
+    const dayAfter = new Date(latest.occurredOn);
+    dayAfter.setUTCDate(dayAfter.getUTCDate() + 1);
+    const since = await this.movementsSince(account, dayAfter);
+
+    const statedInAccountCurrency =
+      latest.currency === account.currency
+        ? toNumber(latest.statedBalanceMinor)
+        : await this.currency.convert(
+            toNumber(latest.statedBalanceMinor),
+            latest.currency,
+            account.currency,
+            todayIso(),
+          );
+
+    return toDto(account, statedInAccountCurrency + since.net, count, {
+      cardLast4: latest.cardLast4,
+      statedBalanceMinor: statedInAccountCurrency,
+      asOf: requireIsoDate(latest.occurredOn),
+      movementsSinceMinor: since.net,
+      // Kept rather than discarded: the distance between the two is how much
+      // the movements are missing, and that is a finding, not noise to hide.
+      computedBalanceMinor: computed,
+    });
   }
 
   /**
@@ -85,8 +133,9 @@ export class AccountsService {
    */
   private async movementsSince(
     account: FinancialAccount,
+    from?: Date,
   ): Promise<{ net: number; count: number }> {
-    const since = account.openingBalanceDate;
+    const since = from ?? account.openingBalanceDate;
 
     const [spent, received, contributed, repaid] = await Promise.all([
       this.prisma.expense.groupBy({
@@ -216,6 +265,7 @@ export class AccountsService {
           openingBalanceDate: input.openingBalanceDate
             ? fromIsoDate(input.openingBalanceDate)
             : new Date(),
+          balanceCardLast4: input.balanceCardLast4 ?? null,
           // The first account is primary whether or not the box was ticked:
           // one account and no primary is a state with no useful meaning.
           isPrimary: input.isPrimary || isFirst,
@@ -267,6 +317,12 @@ export class AccountsService {
               }
             : {}),
           ...(input.isPrimary !== undefined ? { isPrimary: input.isPrimary } : {}),
+          // `null` unlinks and goes back to computing, which is a different
+          // instruction from not mentioning the field at all — so undefined is
+          // the only value that leaves the link alone.
+          ...(input.balanceCardLast4 !== undefined
+            ? { balanceCardLast4: input.balanceCardLast4 ?? null }
+            : {}),
         },
       });
     });

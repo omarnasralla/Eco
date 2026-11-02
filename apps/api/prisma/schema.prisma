@@ -442,6 +442,8 @@ model FinancialAccount {
   /// the card and never the account, so this is the only join between a
   /// message and the money it moved — and one balance can have several cards.
   cardsLast4          String[]
+  /// Card whose bank-stated balance anchors this balance; null = computed.
+  balanceCardLast4    String?  @db.Char(4)
   isPrimary           Boolean   @default(false)
   /// Reserved for bank aggregation; null while the account is manual.
   providerId          String?   @db.VarChar(60)
