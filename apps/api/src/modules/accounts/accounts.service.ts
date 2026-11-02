@@ -582,4 +582,35 @@ export class AccountsService {
     const { totalMinor } = await this.summary(userId, userCurrency);
     return totalMinor;
   }
+
+  /**
+   * Money that could be reached today, for the emergency buffer.
+   *
+   * Every account except investments, whose value is not a sum you can draw on
+   * this afternoon without selling something at whatever the market offers.
+   *
+   * This exists because the buffer used to count savings GOALS alone. Someone
+   * holding $4,140 across their accounts and no goal was scored as having 0.0
+   * months covered and told to build an emergency fund they already had — the
+   * advice was not merely useless, it was wrong. What makes money an emergency
+   * buffer is being able to get at it, not having been labelled.
+   *
+   * Overdrafts subtract: an account in the red is not a place money is kept.
+   */
+  async liquidBalance(userId: string, userCurrency: string): Promise<number> {
+    const accounts = await this.findAll(userId);
+    let total = 0;
+    for (const account of accounts) {
+      if (account.kind === 'INVESTMENT') continue;
+      total +=
+        account.currency === userCurrency
+          ? account.balanceMinor
+          : await this.currency.convertForDisplay(
+              account.balanceMinor,
+              account.currency,
+              userCurrency,
+            );
+    }
+    return total;
+  }
 }

@@ -618,13 +618,20 @@ export class DashboardService {
 
   /** Essential monthly spend — the denominator of the emergency-fund target. */
   async emergencyFundTarget(userId: string, months = 3): Promise<number> {
-    const month = todayIso().slice(0, 7);
+    const thisMonth = todayIso().slice(0, 7);
+    // Complete months only. The month in progress is partial — on the 2nd it
+    // holds two days of essentials — and averaging it in reports a monthly
+    // cost nobody could actually live on.
+    const window = [1, 2, 3].map((back) => addMonths(thisMonth, -back));
+    const earliest = window[window.length - 1]!;
+
     const rows = await this.prisma.expense.groupBy({
       by: ['categoryId'],
       where: {
         userId,
         deletedAt: null,
-        date: { gte: monthToDate(addMonths(month, -3)), lt: monthToDate(addMonths(month, 1)) },
+        excludedFromBudget: false,
+        date: { gte: monthToDate(earliest), lt: monthToDate(thisMonth) },
       },
       _sum: { baseAmountMinor: true },
     });
@@ -635,10 +642,24 @@ export class DashboardService {
     });
     const essentialIds = new Set(essentials.map((c) => c.id));
 
-    const totalOverThreeMonths = rows
+    const total = rows
       .filter((r) => essentialIds.has(r.categoryId))
       .reduce((sum, r) => sum + toNumber(r._sum.baseAmountMinor ?? BigInt(0)), 0);
 
-    return emergencyFundTargetMinor(Math.round(totalOverThreeMonths / 3), months);
+    // Divided by the months that actually have spending in them, not a flat
+    // three. A ledger two months old has one empty month in the window, and
+    // dividing by three there understates the monthly cost by a third —
+    // producing a target too small to survive the thing it is for.
+    const active = await this.prisma.expense.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+        date: { gte: monthToDate(earliest), lt: monthToDate(thisMonth) },
+      },
+      select: { date: true },
+    });
+    const activeMonths = new Set(active.map((e) => requireIsoDate(e.date).slice(0, 7))).size;
+
+    return emergencyFundTargetMinor(Math.round(total / Math.max(activeMonths, 1)), months);
   }
 }

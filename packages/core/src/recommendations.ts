@@ -48,6 +48,13 @@ export interface FinancialSnapshot {
   recurring: RecurringExpense[];
   forecast: CashFlowForecastPoint[];
   emergencyFundTargetMinor: number;
+  /**
+   * How many months of essentials the target represents. Default 3.
+   *
+   * Carried so the buffer can be expressed in months without the score
+   * hard-coding the same assumption the target was built on.
+   */
+  emergencyFundMonths?: number;
   /** Contribution the user has told us they want to hit each month. */
   targetSavingsRatePct?: number;
 }
@@ -361,9 +368,29 @@ export function financialHealthScore(s: FinancialSnapshot): {
   const rate = savingsRatePct(s.monthlyIncomeMinor, s.monthlyExpensesMinor);
   const savingsScore = clamp((rate / 20) * 100, 0, 100);
 
-  const bufferMonths =
-    s.monthlyExpensesMinor > 0 ? s.liquidSavingsMinor / s.monthlyExpensesMinor : 0;
-  const bufferScore = clamp((bufferMonths / 6) * 100, 0, 100);
+  /*
+   * The buffer is measured against ESSENTIAL spending, not all of it.
+   *
+   * It used to divide by total monthly expenses and score against six months,
+   * which measured the wrong thing twice. In a crisis you stop buying clothes
+   * and start cooking; what has to keep being paid is rent, transport and
+   * utilities. Someone holding $4,140 was told they had 1.9 months of cover
+   * and scored 31, while the target screen said they had three times what they
+   * needed — two numbers, both official, flatly contradicting each other.
+   *
+   * Now both read the same figure: the target is N months of essentials, and
+   * the score is progress towards it. Falls back to total expenses only when
+   * no category has been marked essential, where an under-estimate beats
+   * dividing by zero and claiming infinite cover.
+   */
+  const months = s.emergencyFundMonths ?? 3;
+  const monthlyEssential =
+    s.emergencyFundTargetMinor > 0 ? s.emergencyFundTargetMinor / months : s.monthlyExpensesMinor;
+  const bufferMonths = monthlyEssential > 0 ? s.liquidSavingsMinor / monthlyEssential : 0;
+  const bufferScore =
+    s.emergencyFundTargetMinor > 0
+      ? clamp((s.liquidSavingsMinor / s.emergencyFundTargetMinor) * 100, 0, 100)
+      : clamp((bufferMonths / months) * 100, 0, 100);
 
   /*
    * Debt is scored on payment burden, not balance.
@@ -389,7 +416,15 @@ export function financialHealthScore(s: FinancialSnapshot): {
 
   const components = [
     { name: 'Savings rate', score: Math.round(savingsScore), weight: 0.3, detail: `${rate}% of income saved` },
-    { name: 'Emergency buffer', score: Math.round(bufferScore), weight: 0.25, detail: `${bufferMonths.toFixed(1)} months of expenses covered` },
+    {
+      name: 'Emergency buffer',
+      score: Math.round(bufferScore),
+      weight: 0.25,
+      detail:
+        s.emergencyFundTargetMinor > 0
+          ? `${bufferMonths.toFixed(1)} of ${months} months of essentials covered`
+          : `${bufferMonths.toFixed(1)} months of expenses covered`,
+    },
     {
       name: 'Debt load',
       score: Math.round(debtScore),

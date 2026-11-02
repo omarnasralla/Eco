@@ -17,6 +17,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { IncomeService } from '../income/income.service';
 import { GoalsService } from '../goals/goals.service';
+import { AccountsService } from '../accounts/accounts.service';
 import { DashboardService } from '../dashboard/dashboard.service';
 import { decimalToNumber, toNumber } from '../../common/utils/money';
 import { monthToDate, requireIsoDate, todayIso } from '../../common/utils/dates';
@@ -38,6 +39,7 @@ export class AiContextService {
     private readonly income: IncomeService,
     private readonly goals: GoalsService,
     private readonly dashboard: DashboardService,
+    private readonly accounts: AccountsService,
   ) {}
 
   /** Transactions over the trailing window, for pattern detection. */
@@ -81,7 +83,13 @@ export class AiContextService {
       await Promise.all([
         this.transactions(userId, 12),
         this.income.monthlyTotal(userId, userCurrency),
-        this.goals.totalSaved(userId, userCurrency),
+        // Cash the user could reach today, plus anything put aside in a goal.
+        // Goals alone scored someone holding $4,140 as having 0.0 months of
+        // buffer and advised them to build a fund they already had.
+        Promise.all([
+          this.accounts.liquidBalance(userId, userCurrency),
+          this.goals.totalSaved(userId, userCurrency),
+        ]).then(([liquid, saved]) => liquid + saved),
         this.prisma.debt.findMany({ where: { userId, deletedAt: null, isClosed: false } }),
         this.prisma.category.findMany({
           where: { userId, deletedAt: null },

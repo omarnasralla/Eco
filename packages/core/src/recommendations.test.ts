@@ -399,3 +399,54 @@ describe('recommendation links', () => {
     }
   });
 });
+
+/**
+ * The buffer used to divide by total monthly expenses and score against six
+ * months, while the target screen counted three months of ESSENTIALS. Both
+ * figures were official and they contradicted each other: $4,140 read as "1.9
+ * months, score 31" on one and "three times funded" on the other.
+ */
+describe('emergency buffer', () => {
+  const withBuffer = (liquid: number, target: number, monthlyExpenses = 220_000) =>
+    financialHealthScore(
+      snapshot({
+        monthlyIncomeMinor: 430_000,
+        monthlyExpensesMinor: monthlyExpenses,
+        liquidSavingsMinor: liquid,
+        emergencyFundTargetMinor: target,
+      }),
+    ).components.find((c) => c.name === 'Emergency buffer')!;
+
+  it('scores progress towards the target, not towards six months of everything', () => {
+    // 4,140 against a 1,252 target is fully funded, however large the month's
+    // total spending happens to be.
+    expect(withBuffer(414_045, 125_217).score).toBe(100);
+  });
+
+  it('counts the months in essentials, and says so', () => {
+    const c = withBuffer(125_217, 125_217);
+    expect(c.score).toBe(100);
+    expect(c.detail).toBe('3.0 of 3 months of essentials covered');
+  });
+
+  it('is partway when the money is partway', () => {
+    expect(withBuffer(62_608, 125_217).score).toBe(50);
+  });
+
+  it('is zero with nothing put by', () => {
+    expect(withBuffer(0, 125_217).score).toBe(0);
+  });
+
+  it('falls back to total expenses when nothing is marked essential', () => {
+    // An under-estimate beats dividing by zero and claiming infinite cover.
+    const c = withBuffer(220_000, 0, 220_000);
+    expect(c.detail).toBe('1.0 months of expenses covered');
+    expect(c.score).toBeGreaterThan(0);
+  });
+
+  it('does not report cover when there is no spending at all', () => {
+    const c = withBuffer(100_000, 0, 0);
+    expect(c.score).toBe(0);
+    expect(c.detail).toBe('0.0 months of expenses covered');
+  });
+});
