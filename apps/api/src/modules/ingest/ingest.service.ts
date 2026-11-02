@@ -321,6 +321,10 @@ export class IngestService {
       };
     }
 
+    if (parsed.kind === 'BALANCE') {
+      return this.recordCheckpoint(userId, parsed, reference, account, occurredOn);
+    }
+
     if (parsed.kind === 'REVERSAL') {
       return this.applyReversal(userId, parsed, reference, account, occurredOn);
     }
@@ -509,6 +513,80 @@ export class IngestService {
       currency: match.currency,
       merchant: match.merchant ?? parsed.merchant,
       categoryName: match.category.name,
+      needsReview: false,
+      accountName: account?.name ?? null,
+    };
+  }
+
+  /**
+   * Record a stated balance, and the movement it was stated after.
+   *
+   * No expense is created. The alert comes from the account that funds the
+   * wallet, and the wallet's own purchase alerts are already recorded — a
+   * top-up booked here as well would count the same money twice, once leaving
+   * Beirut and again being spent in Riyadh. The balance is what has no other
+   * source, and chained against the next one it is the only thing that says
+   * what the transfer cost.
+   */
+  private async recordCheckpoint(
+    userId: string,
+    parsed: ParsedSms,
+    reference: string,
+    account: { id: string; name: string; currency: string } | null,
+    occurredOn: string,
+  ): Promise<IngestResultDto & { kind: string }> {
+    const stated = parsed.statedBalanceMinor;
+    // The pattern cannot match without one, so this is a guard against a
+    // future format being routed here by mistake rather than a real case.
+    if (stated === undefined) {
+      throw new BadRequestException('That message carried no balance. Nothing was recorded.');
+    }
+
+    const existing = await this.prisma.balanceCheckpoint.findFirst({
+      where: { userId, externalRef: reference },
+    });
+    if (existing) {
+      return {
+        kind: parsed.kind,
+        expenseId: existing.id,
+        duplicate: true,
+        amountMinor: toNumber(existing.amountMinor),
+        currency: existing.currency,
+        merchant: existing.merchant,
+        categoryName: '—',
+        needsReview: false,
+        accountName: account?.name ?? null,
+      };
+    }
+
+    const row = await this.prisma.balanceCheckpoint.create({
+      data: {
+        userId,
+        accountId: account?.id ?? null,
+        cardLast4: parsed.cardLast4 ?? '????',
+        currency: parsed.currency,
+        amountMinor: BigInt(parsed.amountMinor),
+        statedBalanceMinor: BigInt(stated),
+        merchant: parsed.merchant,
+        occurredOn: fromIsoDate(occurredOn),
+        externalRef: reference,
+      },
+    });
+    await this.redis.invalidateUser(userId);
+
+    this.logger.log(
+      `balance checkpoint user=${userId} card=${parsed.cardLast4 ?? 'none'} ` +
+        `amount=${parsed.amountMinor} ${parsed.currency} balance=${stated} on=${occurredOn}`,
+    );
+
+    return {
+      kind: parsed.kind,
+      expenseId: row.id,
+      duplicate: false,
+      amountMinor: parsed.amountMinor,
+      currency: parsed.currency,
+      merchant: parsed.merchant,
+      categoryName: '—',
       needsReview: false,
       accountName: account?.name ?? null,
     };

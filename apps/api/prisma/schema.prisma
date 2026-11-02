@@ -100,6 +100,35 @@ enum NotificationChannel {
   PUSH
 }
 
+/// A balance the bank stated, and the movement it stated it after.
+///
+/// Not an expense: these come from the account that funds the wallet, whose
+/// own purchase alerts are already recorded. Kept for the balance, which is
+/// the only way to learn what a transfer cost.
+model BalanceCheckpoint {
+  id                 String   @id @default(uuid()) @db.Uuid
+  userId             String   @db.Uuid
+  accountId          String?  @db.Uuid
+  cardLast4          String   @db.Char(4)
+  currency           String   @db.Char(3)
+  amountMinor        BigInt
+  /// -1 leaves the account, +1 arrives.
+  direction          Int      @default(-1) @db.SmallInt
+  /// The balance AFTER the movement, exactly as the bank wrote it.
+  statedBalanceMinor BigInt
+  merchant           String   @db.VarChar(160)
+  occurredOn         DateTime @db.Date
+  externalRef        String?  @db.VarChar(120)
+  createdAt          DateTime @default(now())
+
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, externalRef])
+  @@index([userId, cardLast4, occurredOn, createdAt])
+  @@map("balance_checkpoints")
+}
+
 enum NotificationType {
   BILL_DUE
   BUDGET_EXCEEDED
@@ -252,6 +281,7 @@ model User {
   forecasts              ForecastSnapshot[]
   spendingPatterns       SpendingPattern[]
   plannedPurchases       PlannedPurchase[]
+  balanceCheckpoints     BalanceCheckpoint[]
 
   @@index([deletedAt])
   @@map("users")
@@ -425,6 +455,7 @@ model FinancialAccount {
   expenses      Expense[]
   incomeSources IncomeSource[]
   receipts      IncomeReceipt[]
+  checkpoints   BalanceCheckpoint[]
   contributions GoalContribution[]
   debts         Debt[]
   debtPayments  DebtPayment[]

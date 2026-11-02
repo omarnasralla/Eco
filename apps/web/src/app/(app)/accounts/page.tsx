@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { BalanceFlowCard } from '@/components/accounts/balance-flow-card';
 
 export default function AccountsPage() {
   const { currency, locale } = useMoneyFormat();
@@ -179,6 +180,14 @@ export default function AccountsPage() {
         locale={locale}
         onSaved={refreshAll}
       />
+
+      {/* What the bank's own balance alerts say it costs to move money between
+          these accounts — derived from the balances, since no message ever
+          states a fee. */}
+      <div className="mt-6 space-y-3">
+        <h2 className="text-sm font-medium text-muted-foreground">Transfers and fees</h2>
+        <BalanceFlowCard />
+      </div>
 
       <ReconcileDialog
         key={`count-${counting?.id ?? 'none'}`}

@@ -70,6 +70,7 @@ DECLARE
     'notifications', 'notification_preferences', 'push_tokens',
     'reports', 'recommendations', 'ai_conversations',
     'spending_patterns', 'forecast_snapshots', 'refresh_tokens',
+    'planned_purchases', 'balance_checkpoints',
     'verification_tokens', 'oauth_accounts',
     -- Capture tokens carry their owner's id in the token itself, so the
     -- tenant is known before the lookup and this policy does not lock the

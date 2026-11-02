@@ -6,3 +6,4 @@ export * from './savings';
 export * from './patterns';
 export * from './forecast';
 export * from './recommendations';
+export * from './balance-flow';

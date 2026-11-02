@@ -18,7 +18,7 @@ import { parseAmountToMinor } from '../../common/utils/parse-amount';
  * coming back is a refund and belongs in the ledger, whereas a reversal means
  * the money never left and the row should not be there at all.
  */
-export type SmsKind = 'SPEND' | 'RECEIVE' | 'IGNORE' | 'REVERSAL';
+export type SmsKind = 'SPEND' | 'RECEIVE' | 'IGNORE' | 'REVERSAL' | 'BALANCE';
 
 /** One transaction, read out of a bank's SMS alert. */
 export interface ParsedSms {
@@ -45,6 +45,17 @@ export interface ParsedSms {
    * folded into the total, and recorded where it can be seen.
    */
   fee: { amountMinor: number; currency: string } | null;
+  /**
+   * The balance the bank stated AFTER this movement, when it stated one.
+   *
+   * Only the funding account's alerts carry it, and it is the single most
+   * useful number in any of these messages: chained against the next one it
+   * says what a transfer actually cost, which no message ever states.
+   *
+   * Optional rather than nullable so the formats that carry no balance need
+   * not mention it at all.
+   */
+  statedBalanceMinor?: number;
 }
 
 /**
@@ -155,6 +166,40 @@ const PATTERNS: Array<{ name: string; parse: (text: string) => ParsedSms | null 
         cardLast4: m[1]!.slice(-4),
         date: iso(m[7]!, m[6]!, m[5]!),
         fee: null,
+      };
+    },
+  },
+  {
+    // Pls note a transaction was made on your card (ending 0115) for
+    // USD202.01 at URPAYRIYADH SA Av.Bal:2533.45 on 23/10/2026. if not
+    // yours,pls call:9611738800
+    //
+    // The funding account's own alert. BALANCE rather than SPEND on purpose:
+    // this account pays for the wallet that the purchase alerts already come
+    // from, so recording these as expenses would count the same money twice —
+    // once leaving Beirut and again being spent in Riyadh. What it is worth
+    // keeping is the balance, which is the only way to learn what a transfer
+    // cost.
+    name: 'balance-alert',
+    parse: (text) => {
+      // The merchant is lazy and anchored on " Av.Bal", because the name runs
+      // two words together ("URPAYRIYADH SA") and has no delimiter of its own.
+      const m =
+        /transaction was made on your card\s*\(\s*ending\s*(\d{3,4})\s*\)\s*for\s*([A-Za-z]{3})\s*([\d.,]+)\s*at\s*(.+?)\s*Av\.?\s*Bal[.:\s]*([\d.,]+)\s*on\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/i.exec(
+          text,
+        );
+      if (!m) return null;
+
+      const currency = m[2]!.toUpperCase();
+      return {
+        kind: 'BALANCE',
+        amountMinor: parseAmountToMinor(m[3]!, currency),
+        currency,
+        merchant: clean(m[4]!),
+        cardLast4: m[1]!.slice(-4),
+        date: iso(m[8]!, m[7]!, m[6]!),
+        fee: null,
+        statedBalanceMinor: parseAmountToMinor(m[5]!, currency),
       };
     },
   },

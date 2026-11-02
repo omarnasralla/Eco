@@ -22,6 +22,7 @@ import type {
   SavingsGoalDto,
   TrendPointDto,
   UpcomingBillDto,
+  BalanceFlowDto,
 } from '@eco/shared';
 import { api } from './api-client';
 
@@ -49,6 +50,7 @@ export const queryKeys = {
   goalContributions: (id: string) => ['goals', id, 'contributions'] as const,
   budget: (month: string, display?: string) => ['budgets', month, display ?? '-'] as const,
   accounts: ['accounts'] as const,
+  balanceFlow: ['balance', 'flow'] as const,
   merchantSuggestions: (categoryId: string, search: string) =>
     ['expenses', 'merchants', categoryId, search] as const,
   incomeReceipts: ['income', 'receipts'] as const,
@@ -70,6 +72,8 @@ export const queryKeys = {
 
 export const fetchers = {
   accounts: () => api.get<AccountDto[]>('/accounts'),
+
+  balanceFlow: () => api.get<BalanceFlowDto[]>('/balance/flow'),
 
   merchantSuggestions: (categoryId?: string, search?: string) =>
     api.get<string[]>('/expenses/merchants', {

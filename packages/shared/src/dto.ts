@@ -735,6 +735,38 @@ export interface IngestResultDto {
   accountName: string | null;
 }
 
+/** One movement in a card's balance chain, with what the arithmetic says. */
+export interface FlowStepDto {
+  id: string;
+  occurredOn: string;
+  merchant: string;
+  amountMinor: number;
+  /** -1 left the account, +1 arrived. */
+  direction: number;
+  statedBalanceMinor: number;
+  openingBalanceMinor: number | null;
+  expectedBalanceMinor: number | null;
+  /** stated − expected. Negative is money that left unannounced. */
+  gapMinor: number | null;
+  kind: 'EXACT' | 'FEE' | 'MISSING_DEBIT' | 'UNEXPLAINED_CREDIT' | 'UNKNOWN';
+}
+
+/** A card's chain of stated balances, and what the gaps in it come to. */
+export interface BalanceFlowDto {
+  cardLast4: string;
+  currency: string;
+  accountName: string | null;
+  steps: FlowStepDto[];
+  statedOutMinor: number;
+  feesMinor: number;
+  unexplainedDebitsMinor: number;
+  unexplainedCreditsMinor: number;
+  closingBalanceMinor: number | null;
+  closingOn: string | null;
+  /** Movements with no prior balance to check against; totals exclude them. */
+  blindSteps: number;
+}
+
 export interface AccountsSummaryDto {
   /** Every account converted into the user's base currency and added up. */
   totalMinor: number;
