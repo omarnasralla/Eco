@@ -36,7 +36,13 @@ export interface BalanceCheckpoint {
  * the number is but whether to go looking for a message. A plausible fee is
  * filed; a large one is a gap in the record.
  */
-export type GapKind = 'EXACT' | 'FEE' | 'MISSING_DEBIT' | 'UNEXPLAINED_CREDIT' | 'UNKNOWN';
+export type GapKind =
+  | 'EXACT'
+  | 'FEE'
+  | 'MISSING_DEBIT'
+  | 'SALARY'
+  | 'UNEXPLAINED_CREDIT'
+  | 'UNKNOWN';
 
 export interface FlowStep {
   checkpoint: BalanceCheckpoint;
@@ -63,7 +69,19 @@ export interface FlowSummary {
   feesMinor: number;
   /** Debits large enough that a missing message is the likelier explanation. */
   unexplainedDebitsMinor: number;
-  /** Money that arrived unannounced — a salary, a refund, a transfer in. */
+  /** Credits big enough to be the monthly salary arriving. */
+  salaryMinor: number;
+  /**
+   * What those salary credits were short by.
+   *
+   * A salary landing in the same blind gap as a transfer leaves one number
+   * covering both, so the transfer's fee is invisible — until the expected
+   * salary is known, and then it is exactly the shortfall. This is what turned
+   * "about 4,289 arrived" into "the salary is 4,300 and that transfer cost
+   * 10.67". Zero when no salary figure was supplied.
+   */
+  salaryShortfallMinor: number;
+  /** Money that arrived unannounced and was too small to be the salary. */
   unexplainedCreditsMinor: number;
   /** The most recent balance the bank stated, and when. */
   closingBalanceMinor: number | null;
@@ -82,12 +100,32 @@ export interface FlowSummary {
 export const MAX_PLAUSIBLE_FEE_MINOR = 5_000;
 
 /**
+ * How close to the expected salary a credit must be to be called the salary.
+ *
+ * Not an exact match, and it never can be: the salary lands in the same blind
+ * gap as whatever transfer happened beside it, so the credit is always the
+ * salary minus that transfer's fee. 90% leaves room for a fee without letting
+ * an unrelated few hundred be mistaken for a month's pay.
+ */
+export const SALARY_MATCH_FRACTION = 0.9;
+
+/**
  * Order checkpoints and read the gaps between them.
  *
  * One chain per card and currency: two cards share no balance, and neither do
  * two currencies on one card, so comparing across either produces nonsense.
  */
-export function buildFlow(checkpoints: BalanceCheckpoint[]): FlowSummary[] {
+export function buildFlow(
+  checkpoints: BalanceCheckpoint[],
+  /**
+   * The monthly salary expected in this chain's currency, when one is known.
+   *
+   * Supplying it turns the largest credits from "money arrived from somewhere"
+   * into "the salary landed, and it was short by this much" — which is the only
+   * way the fee hiding behind a salary can be read at all.
+   */
+  expectedSalaryMinor?: number,
+): FlowSummary[] {
   const chains = new Map<string, BalanceCheckpoint[]>();
   for (const c of checkpoints) {
     const key = `${c.cardLast4}|${c.currency}`;
@@ -114,7 +152,7 @@ export function buildFlow(checkpoints: BalanceCheckpoint[]): FlowSummary[] {
         openingBalanceMinor: opening,
         expectedBalanceMinor: expected,
         gapMinor: gap,
-        kind: classify(gap),
+        kind: classify(gap, expectedSalaryMinor),
       });
       previous = checkpoint;
     }
@@ -129,7 +167,16 @@ export function buildFlow(checkpoints: BalanceCheckpoint[]): FlowSummary[] {
         .reduce((sum, c) => sum + c.amountMinor, 0),
       feesMinor: total(steps, 'FEE'),
       unexplainedDebitsMinor: total(steps, 'MISSING_DEBIT'),
+      salaryMinor: total(steps, 'SALARY'),
       unexplainedCreditsMinor: total(steps, 'UNEXPLAINED_CREDIT'),
+      // Each salary credit is short by whatever the transfer recorded beside
+      // it cost. Added up rather than reported per step, because what is
+      // useful is the total being lost to transfers this way.
+      salaryShortfallMinor: expectedSalaryMinor
+        ? steps
+            .filter((s) => s.kind === 'SALARY')
+            .reduce((sum, s) => sum + feeImpliedByCredit(s.gapMinor ?? 0, expectedSalaryMinor), 0)
+        : 0,
       closingBalanceMinor: last ? last.statedBalanceMinor : null,
       closingOn: last ? last.occurredOn : null,
       blindSteps: steps.filter((s) => s.gapMinor === null).length,
@@ -137,10 +184,18 @@ export function buildFlow(checkpoints: BalanceCheckpoint[]): FlowSummary[] {
   });
 }
 
-function classify(gap: number | null): GapKind {
+function classify(gap: number | null, expectedSalaryMinor?: number): GapKind {
   if (gap === null) return 'UNKNOWN';
   if (gap === 0) return 'EXACT';
-  if (gap > 0) return 'UNEXPLAINED_CREDIT';
+  if (gap > 0) {
+    // A credit near the expected salary is the salary. On this account it is
+    // the only thing that arrives at that size, and calling it "a refund or a
+    // transfer" made the one predictable event in the chain look mysterious.
+    const isSalary =
+      expectedSalaryMinor !== undefined &&
+      gap >= Math.round(expectedSalaryMinor * SALARY_MATCH_FRACTION);
+    return isSalary ? 'SALARY' : 'UNEXPLAINED_CREDIT';
+  }
   return -gap <= MAX_PLAUSIBLE_FEE_MINOR ? 'FEE' : 'MISSING_DEBIT';
 }
 

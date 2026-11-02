@@ -137,7 +137,8 @@ export class AccountsService {
   ): Promise<{ net: number; count: number }> {
     const since = from ?? account.openingBalanceDate;
 
-    const [spent, received, contributed, repaid] = await Promise.all([
+    const [spent, received, contributed, repaid, sentOut, arrived, arrivedUnstated] =
+      await Promise.all([
       this.prisma.expense.groupBy({
         by: ['currency'],
         where: { accountId: account.id, deletedAt: null, date: { gte: since } },
@@ -172,7 +173,52 @@ export class AccountsService {
         _sum: { amountMinor: true },
         _count: { _all: true },
       }),
+      // Money moved to another account the user owns. It is not spending, so
+      // it is not an expense — but it did leave this account, so a balance
+      // that ignored it would show a wallet's float still sitting in the bank
+      // account that funded it.
+      this.prisma.transfer.groupBy({
+        by: ['currency'],
+        where: { fromAccountId: account.id, deletedAt: null, occurredOn: { gte: since } },
+        _sum: { amountMinor: true },
+        _count: { _all: true },
+      }),
+      // Arriving from one. Grouped on `receivedCurrency` because what matters
+      // on this side is what landed, not what was sent: a top-up leaves in
+      // dollars and arrives in riyals, and the riyals are what this account
+      // can now spend.
+      this.prisma.transfer.groupBy({
+        by: ['receivedCurrency'],
+        where: { toAccountId: account.id, deletedAt: null, occurredOn: { gte: since } },
+        _sum: { receivedMinor: true },
+        _count: { _all: true },
+      }),
+      // The incoming transfers whose arriving amount nobody stated. Converted
+      // from what was sent, which is the best available answer and visibly a
+      // derived one.
+      this.prisma.transfer.groupBy({
+        by: ['currency'],
+        where: {
+          toAccountId: account.id,
+          deletedAt: null,
+          occurredOn: { gte: since },
+          receivedMinor: null,
+        },
+        _sum: { amountMinor: true },
+        _count: { _all: true },
+      }),
     ]);
+
+    // `arrived` is keyed on receivedCurrency and receivedMinor; every other
+    // group is keyed on currency and amountMinor. Normalised here so the one
+    // conversion loop below can read them all the same way.
+    const arrivedRows = arrived
+      .filter((row) => row.receivedCurrency !== null)
+      .map((row) => ({
+        currency: row.receivedCurrency as string,
+        _sum: { amountMinor: row._sum.receivedMinor },
+        _count: row._count,
+      }));
 
     let net = 0;
     let count = 0;
@@ -181,6 +227,9 @@ export class AccountsService {
       [received, 1],
       [contributed, -1],
       [repaid, -1],
+      [sentOut, -1],
+      [arrivedRows, 1],
+      [arrivedUnstated, 1],
     ] as const) {
       for (const row of rows) {
         count += row._count._all;

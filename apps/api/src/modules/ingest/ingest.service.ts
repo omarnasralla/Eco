@@ -321,6 +321,10 @@ export class IngestService {
       };
     }
 
+    if (parsed.kind === 'TRANSFER') {
+      return this.recordTransfer(userId, parsed, reference, account, occurredOn);
+    }
+
     if (parsed.kind === 'BALANCE') {
       return this.recordCheckpoint(userId, parsed, reference, account, occurredOn);
     }
@@ -513,6 +517,101 @@ export class IngestService {
       currency: match.currency,
       merchant: match.merchant ?? parsed.merchant,
       categoryName: match.category.name,
+      needsReview: false,
+      accountName: account?.name ?? null,
+    };
+  }
+
+  /**
+   * Record money moving between two accounts the user owns.
+   *
+   * Neither spending nor income — a top up earns nothing and buys nothing —
+   * so no expense and no receipt is created. What it does do is leave one
+   * balance and arrive in another, which is why ignoring it stopped being
+   * right once the wallet became an account of its own: the wallet was
+   * spending riyals nobody had given it.
+   *
+   * The amount stated here is what ARRIVED, in the wallet's own currency, and
+   * that is the reason this message records the move rather than the funding
+   * bank's alert. The bank states dollars debited and no balance for the
+   * wallet; this states the exact riyals the wallet can now spend. The funding
+   * side needs no help, because its balance is read from the bank directly.
+   */
+  private async recordTransfer(
+    userId: string,
+    parsed: ParsedSms,
+    reference: string,
+    account: { id: string; name: string; currency: string } | null,
+    occurredOn: string,
+  ): Promise<IngestResultDto & { kind: string }> {
+    const existing = await this.prisma.transfer.findFirst({
+      where: { userId, externalRef: reference },
+    });
+    if (existing) {
+      return {
+        kind: parsed.kind,
+        expenseId: existing.id,
+        duplicate: true,
+        amountMinor: toNumber(existing.amountMinor),
+        currency: existing.currency,
+        merchant: parsed.merchant,
+        categoryName: '—',
+        needsReview: false,
+        accountName: account?.name ?? null,
+      };
+    }
+
+    // The destination is named on the message's first line ("Top Up to
+    // urpay") and matched to an account by name. Matched rather than
+    // configured because the name IS the identifier the bank uses, and a
+    // wallet that has not been set up as an account yet still produces a
+    // correct record of money leaving the account that funded it.
+    const destination = await this.prisma.financialAccount.findFirst({
+      where: {
+        userId,
+        deletedAt: null,
+        name: { equals: parsed.merchant, mode: 'insensitive' },
+      },
+      select: { id: true, name: true },
+    });
+
+    if (!destination) {
+      this.logger.warn(
+        `transfer destination unknown user=${userId} named=${parsed.merchant} — ` +
+          `recorded as leaving ${account?.name ?? 'no account'} only`,
+      );
+    }
+
+    const row = await this.prisma.transfer.create({
+      data: {
+        userId,
+        fromAccountId: account?.id ?? null,
+        toAccountId: destination?.id ?? null,
+        amountMinor: BigInt(parsed.amountMinor),
+        currency: parsed.currency,
+        // Stated, not derived: this message's amount is the arriving side.
+        receivedMinor: BigInt(parsed.amountMinor),
+        receivedCurrency: parsed.currency,
+        note: destination ? null : `Destination "${parsed.merchant}" is not an account`,
+        occurredOn: fromIsoDate(occurredOn),
+        externalRef: reference,
+      },
+    });
+    await this.redis.invalidateUser(userId);
+
+    this.logger.log(
+      `transfer user=${userId} ${account?.name ?? 'none'} -> ${destination?.name ?? 'unknown'} ` +
+        `${parsed.amountMinor} ${parsed.currency} on=${occurredOn}`,
+    );
+
+    return {
+      kind: parsed.kind,
+      expenseId: row.id,
+      duplicate: false,
+      amountMinor: parsed.amountMinor,
+      currency: parsed.currency,
+      merchant: destination?.name ?? parsed.merchant,
+      categoryName: '—',
       needsReview: false,
       accountName: account?.name ?? null,
     };

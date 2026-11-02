@@ -80,7 +80,11 @@ function FlowChain({ flow }: { flow: BalanceFlowDto }) {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="Moved" value={money(flow.statedOutMinor)} />
           <Stat label="Fees" value={money(flow.feesMinor)} tone="warn" />
-          <Stat label="Arrived" value={money(flow.unexplainedCreditsMinor)} tone="good" />
+          <Stat
+            label={flow.salaryMinor > 0 ? 'Salary in' : 'Arrived'}
+            value={money(flow.salaryMinor > 0 ? flow.salaryMinor : flow.unexplainedCreditsMinor)}
+            tone="good"
+          />
           <Stat
             label="Unexplained"
             value={money(flow.unexplainedDebitsMinor)}
@@ -90,7 +94,12 @@ function FlowChain({ flow }: { flow: BalanceFlowDto }) {
 
         <ol className="space-y-2">
           {flow.steps.map((step) => (
-            <Step key={step.id} step={step} currency={flow.currency} />
+            <Step
+              key={step.id}
+              step={step}
+              currency={flow.currency}
+              expectedSalaryMinor={flow.expectedSalaryMinor}
+            />
           ))}
         </ol>
 
@@ -135,7 +144,15 @@ function Stat({
 }
 
 /** One movement, with what the balance says it really cost. */
-function Step({ step, currency }: { step: FlowStepDto; currency: string }) {
+function Step({
+  step,
+  currency,
+  expectedSalaryMinor,
+}: {
+  step: FlowStepDto;
+  currency: string;
+  expectedSalaryMinor: number | null;
+}) {
   const money = (minor: number) => formatMoney(minor, currency);
   const left = step.direction < 0;
 
@@ -160,7 +177,7 @@ function Step({ step, currency }: { step: FlowStepDto; currency: string }) {
           </p>
         </div>
       </div>
-      <GapLine step={step} currency={currency} />
+      <GapLine step={step} currency={currency} expectedSalaryMinor={expectedSalaryMinor} />
     </li>
   );
 }
@@ -169,9 +186,21 @@ function Step({ step, currency }: { step: FlowStepDto; currency: string }) {
  * The line that does the work: what the balance should have been, what it was,
  * and therefore what the bank took without saying so.
  */
-function GapLine({ step, currency }: { step: FlowStepDto; currency: string }) {
+function GapLine({
+  step,
+  currency,
+  expectedSalaryMinor,
+}: {
+  step: FlowStepDto;
+  currency: string;
+  expectedSalaryMinor: number | null;
+}) {
   const money = (minor: number) => formatMoney(minor, currency);
   const gap = Math.abs(step.gapMinor ?? 0);
+  // The salary arrives short by whatever the transfer beside it cost, so the
+  // difference is that fee — the one number no message anywhere states.
+  const shortfall =
+    step.kind === 'SALARY' && expectedSalaryMinor !== null ? expectedSalaryMinor - gap : null;
 
   if (step.kind === 'UNKNOWN') {
     return (
@@ -200,6 +229,23 @@ function GapLine({ step, currency }: { step: FlowStepDto; currency: string }) {
     );
   }
 
+  if (step.kind === 'SALARY') {
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Badge variant="secondary" className="text-emerald-700 dark:text-emerald-400">
+          Salary {money(gap)}
+        </Badge>
+        {shortfall !== null && shortfall > 0 ? (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {money(expectedSalaryMinor ?? 0)} expected, so this transfer cost {money(shortfall)}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">the monthly salary landing here</span>
+        )}
+      </div>
+    );
+  }
+
   if (step.kind === 'UNEXPLAINED_CREDIT') {
     return (
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -207,7 +253,7 @@ function GapLine({ step, currency }: { step: FlowStepDto; currency: string }) {
           +{money(gap)} arrived
         </Badge>
         <span className="text-xs text-muted-foreground">
-          money came in here with no alert — a salary, a refund or a transfer
+          money came in here with no alert, and too little to be the salary
         </span>
       </div>
     );

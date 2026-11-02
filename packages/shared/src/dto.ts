@@ -772,7 +772,7 @@ export interface FlowStepDto {
   expectedBalanceMinor: number | null;
   /** stated − expected. Negative is money that left unannounced. */
   gapMinor: number | null;
-  kind: 'EXACT' | 'FEE' | 'MISSING_DEBIT' | 'UNEXPLAINED_CREDIT' | 'UNKNOWN';
+  kind: 'EXACT' | 'FEE' | 'MISSING_DEBIT' | 'SALARY' | 'UNEXPLAINED_CREDIT' | 'UNKNOWN';
 }
 
 /** A card's chain of stated balances, and what the gaps in it come to. */
@@ -784,6 +784,12 @@ export interface BalanceFlowDto {
   statedOutMinor: number;
   feesMinor: number;
   unexplainedDebitsMinor: number;
+  /** Credits large enough to be the monthly salary landing. */
+  salaryMinor: number;
+  /** What those salary credits were short by — the fee hiding behind them. */
+  salaryShortfallMinor: number;
+  /** The salary figure the classification used, or null when none is on file. */
+  expectedSalaryMinor: number | null;
   unexplainedCreditsMinor: number;
   closingBalanceMinor: number | null;
   closingOn: string | null;

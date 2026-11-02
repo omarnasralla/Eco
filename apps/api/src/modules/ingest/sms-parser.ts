@@ -8,9 +8,16 @@ import { parseAmountToMinor } from '../../common/utils/parse-amount';
  * timestamp. Reading the amount without reading the type files money coming
  * back as money going out, which is wrong twice over.
  *
- * IGNORE is for movement inside one account — topping the wallet up from the
- * bank account behind it. Nothing entered or left; recording it would count
- * the same riyals a second time.
+ * IGNORE is for a message that states no movement at all.
+ *
+ * TRANSFER is money moving between two accounts the same person owns —
+ * topping the Saudi wallet up from the Lebanese bank account behind it.
+ * Nothing is spent and nothing is earned, so it is neither SPEND nor RECEIVE,
+ * but it does leave one balance and arrive in another. It used to be IGNORE,
+ * which was right while there was one account for both: the top-up and the
+ * spending it funded were the same pocket, and recording the move would have
+ * counted the same riyals twice. With the wallet modelled separately, ignoring
+ * it leaves the wallet spending money it was never given.
  *
  * REVERSAL is not a transaction of its own: the bank is saying a charge it
  * already told us about never happened. It cancels that charge rather than
@@ -18,7 +25,7 @@ import { parseAmountToMinor } from '../../common/utils/parse-amount';
  * coming back is a refund and belongs in the ledger, whereas a reversal means
  * the money never left and the row should not be there at all.
  */
-export type SmsKind = 'SPEND' | 'RECEIVE' | 'IGNORE' | 'REVERSAL' | 'BALANCE';
+export type SmsKind = 'SPEND' | 'RECEIVE' | 'IGNORE' | 'REVERSAL' | 'BALANCE' | 'TRANSFER';
 
 /** One transaction, read out of a bank's SMS alert. */
 export interface ParsedSms {
@@ -78,8 +85,10 @@ const URPAY_KINDS: Array<{ match: RegExp; kind: SmsKind }> = [
   { match: /^\s*verification\s+code/i, kind: 'IGNORE' },
   { match: /^\s*debit via wallet/i, kind: 'SPEND' },
   { match: /^\s*credit via wallet/i, kind: 'RECEIVE' },
-  // Bank account to e-wallet: the same account either side.
-  { match: /^\s*top\s*up/i, kind: 'IGNORE' },
+  // Bank account to e-wallet. The amount stated is what ARRIVED, in the
+  // wallet's own currency, which is the exact figure the wallet's balance
+  // needs — so this message, not the funding bank's, is what records the move.
+  { match: /^\s*top\s*up/i, kind: 'TRANSFER' },
 ];
 
 /**
@@ -120,7 +129,11 @@ const PATTERNS: Array<{ name: string; parse: (text: string) => ParsedSms | null 
       // no counterparty when money moves between two pockets of one account —
       // so it is the one type allowed to arrive without one.
       const counterparty = labelled(text, ['At', 'To', 'From']);
-      if (counterparty === null && kind !== 'IGNORE') return null;
+      // A top up names neither — there is no counterparty when money moves
+      // between two of your own pockets — so it names its destination on the
+      // first line instead: "Top Up to urpay".
+      const destination = kind === 'TRANSFER' ? valueAfter(text, /top\s*up\s+to\s+/i) : null;
+      if (counterparty === null && kind !== 'IGNORE' && kind !== 'TRANSFER') return null;
 
       // "By:" on a purchase, "Card:" on a refund, "Via:" on a top up.
       const card = /(?:By|Card|Via):\s*(\d{3,4})/i.exec(text);
@@ -131,7 +144,7 @@ const PATTERNS: Array<{ name: string; parse: (text: string) => ParsedSms | null 
         kind,
         amountMinor: parseAmountToMinor((afterCode ?? numberFirst)!, currency),
         currency,
-        merchant: counterparty ?? 'Top up',
+        merchant: counterparty ?? destination ?? 'Top up',
         cardLast4: card ? card[1]!.slice(-4) : null,
         date: statedDate(text),
         fee:
@@ -289,14 +302,27 @@ const FIELD_END = new RegExp(
 
 function labelled(text: string, labels: string[]): string | null {
   for (const label of labels) {
-    const start = new RegExp(`\\b${label}:\\s*`, 'i').exec(text);
-    if (!start) continue;
-    const rest = text.slice(start.index + start[0].length);
-    const end = FIELD_END.exec(rest);
-    const value = clean(end && end.index > 0 ? rest.slice(0, end.index) : rest);
+    const value = valueAfter(text, new RegExp(`\\b${label}:\\s*`, 'i'));
     if (value) return value;
   }
   return null;
+}
+
+/**
+ * Whatever follows `start`, up to where the next field begins.
+ *
+ * Shared with `labelled` rather than written twice, because the destination on
+ * a top up needs exactly the same rule and got it wrong on its own: anchored
+ * on the end of the line it read correctly multi-line and then swallowed
+ * "urpay Amount:200 SAR Via:0115 - Visa 27-9-2026 11:53" whole once the phone
+ * flattened the message.
+ */
+function valueAfter(text: string, start: RegExp): string | null {
+  const match = start.exec(text);
+  if (!match) return null;
+  const rest = text.slice(match.index + match[0].length);
+  const end = FIELD_END.exec(rest);
+  return clean(end && end.index > 0 ? rest.slice(0, end.index) : rest) || null;
 }
 
 /** Trailing punctuation and collapsed whitespace; the name is otherwise kept. */

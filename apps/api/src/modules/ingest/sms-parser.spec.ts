@@ -122,9 +122,21 @@ Via:0115 - Visa
     });
   });
 
-  it('marks a top up as movement inside one account', () => {
-    // Bank account to e-wallet. Recording it would count the money twice.
-    expect(parseTransactionSms(TOPUP)?.kind).toBe('IGNORE');
+  it('reads a top up as a transfer, naming the wallet it went to', () => {
+    // Bank account to e-wallet. It was IGNORE while one account stood for
+    // both pockets — the move and the spending it funded were the same money.
+    // With the wallet modelled separately, ignoring it leaves the wallet
+    // spending riyals nobody gave it.
+    expect(parseTransactionSms(TOPUP)).toMatchObject({
+      kind: 'TRANSFER',
+      amountMinor: 20000,
+      currency: 'SAR',
+      // The arriving side, in the wallet's own currency — the exact figure the
+      // wallet's balance needs, which the funding bank's alert cannot give.
+      merchant: 'urpay',
+      cardLast4: '0115',
+      date: '2026-09-27',
+    });
   });
 
   /**
@@ -327,7 +339,7 @@ Amount:5000 SAR
     it('reads a flattened top up', () => {
       expect(
         parseTransactionSms('Top Up to urpay Amount:200 SAR Via:0115 - Visa 27-9-2026 11:53'),
-      ).toMatchObject({ kind: 'IGNORE', cardLast4: '0115' });
+      ).toMatchObject({ kind: 'TRANSFER', cardLast4: '0115', merchant: 'urpay' });
     });
   });
 

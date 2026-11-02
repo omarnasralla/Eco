@@ -129,6 +129,38 @@ model BalanceCheckpoint {
   @@map("balance_checkpoints")
 }
 
+/// Money moved between two accounts the same person owns.
+///
+/// Not an expense and not income: a top-up spends nothing and earns nothing.
+/// Two amounts because a top-up leaves in dollars and arrives in riyals, and
+/// each side is stated in its own message — `receivedMinor` null means only
+/// one side has been seen.
+model Transfer {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  fromAccountId    String?   @db.Uuid
+  toAccountId      String?   @db.Uuid
+  amountMinor      BigInt
+  currency         String    @db.Char(3)
+  receivedMinor    BigInt?
+  receivedCurrency String?   @db.Char(3)
+  note             String?   @db.VarChar(160)
+  occurredOn       DateTime  @db.Date
+  externalRef      String?   @db.VarChar(120)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromAccount FinancialAccount? @relation("TransfersOut", fields: [fromAccountId], references: [id], onDelete: SetNull)
+  toAccount   FinancialAccount? @relation("TransfersIn", fields: [toAccountId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, externalRef])
+  @@index([fromAccountId, occurredOn])
+  @@index([toAccountId, occurredOn])
+  @@map("transfers")
+}
+
 enum NotificationType {
   BILL_DUE
   BUDGET_EXCEEDED
@@ -282,6 +314,7 @@ model User {
   spendingPatterns       SpendingPattern[]
   plannedPurchases       PlannedPurchase[]
   balanceCheckpoints     BalanceCheckpoint[]
+  transfers              Transfer[]
 
   @@index([deletedAt])
   @@map("users")
@@ -458,6 +491,8 @@ model FinancialAccount {
   incomeSources IncomeSource[]
   receipts      IncomeReceipt[]
   checkpoints   BalanceCheckpoint[]
+  transfersOut  Transfer[]        @relation("TransfersOut")
+  transfersIn   Transfer[]        @relation("TransfersIn")
   contributions GoalContribution[]
   debts         Debt[]
   debtPayments  DebtPayment[]

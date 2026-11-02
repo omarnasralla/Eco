@@ -42,6 +42,41 @@ describe('buildFlow', () => {
     ]);
   });
 
+  it('names the big credit the salary once the salary is known', () => {
+    // 4,289.33 arrived against 4,300.00 expected: the salary, short by the fee
+    // on the transfer that happened in the same blind gap.
+    const [flow] = buildFlow(REAL, 430000);
+    const step = flow!.steps.find((s) => s.checkpoint.occurredOn === '2026-10-31');
+    expect(step!.kind).toBe('SALARY');
+    expect(flow!.salaryMinor).toBe(428933);
+    expect(flow!.salaryShortfallMinor).toBe(1067);
+    expect(flow!.unexplainedCreditsMinor).toBe(0);
+  });
+
+  it('will not call a small credit the salary', () => {
+    const small = [cp('p', '2026-10-01', 10000, 100000), cp('q', '2026-10-02', 10000, 120000)];
+    const [flow] = buildFlow(small, 430000);
+    expect(flow!.steps[1]!.kind).toBe('UNEXPLAINED_CREDIT');
+    expect(flow!.salaryMinor).toBe(0);
+    expect(flow!.salaryShortfallMinor).toBe(0);
+  });
+
+  it('leaves credits unnamed when no salary figure is given', () => {
+    // Guessing "salary" without something to compare against would be a
+    // confident invention.
+    expect(buildFlow(REAL)[0]!.steps[2]!.kind).toBe('UNEXPLAINED_CREDIT');
+    expect(buildFlow(REAL)[0]!.salaryShortfallMinor).toBe(0);
+  });
+
+  it('accepts a salary short by a plausible fee but not by a third', () => {
+    const credit = (gap: number) => [
+      cp('p', '2026-10-01', 0, 430000),
+      cp('q', '2026-10-02', 0, 430000 + gap),
+    ];
+    expect(buildFlow(credit(387000), 430000)[0]!.steps[1]!.kind).toBe('SALARY');
+    expect(buildFlow(credit(286000), 430000)[0]!.steps[1]!.kind).toBe('UNEXPLAINED_CREDIT');
+  });
+
   it('totals what the alerts stated and what they did not', () => {
     const [flow] = buildFlow(REAL);
     expect(flow!.statedOutMinor).toBe(20201 + 20191 + 53845 + 240000);
