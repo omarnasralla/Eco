@@ -353,3 +353,49 @@ describe('financialHealthScore', () => {
     expect(result.score).toBeGreaterThanOrEqual(0);
   });
 });
+
+/**
+ * Every link a recommendation offers has to land on a page that exists.
+ *
+ * Two of them did not: `/debts/payoff-plan` and `/goals/emergency-fund` were
+ * never built, so those cards led to a 404 — and because Next prefetches a
+ * link it can see, every dashboard load quietly logged two of them. A reader
+ * of the source would not notice; a list of the real routes does.
+ */
+describe('recommendation links', () => {
+  // The pages under apps/web/src/app/(app). Add to this when a page is added.
+  const ROUTES = new Set([
+    '/dashboard',
+    '/expenses',
+    '/budgets',
+    '/debts',
+    '/income',
+    '/accounts',
+    '/goals',
+    '/reports',
+    '/settings',
+    '/assistant',
+    '/admin',
+  ]);
+
+  it('points only at pages that exist', () => {
+    const urls = [
+      ...generateRecommendations(
+        snapshot({
+          monthlyIncomeMinor: 500_000,
+          monthlyExpensesMinor: 300_000,
+          liquidSavingsMinor: 1_000,
+        }),
+      ),
+      ...generateRecommendations(snapshot({})),
+    ]
+      .map((r) => r.actionUrl)
+      .filter((u): u is string => u !== null);
+
+    expect(urls.length).toBeGreaterThan(0);
+    for (const url of urls) {
+      // Query strings are a view of a page, not a page of their own.
+      expect(ROUTES).toContain(url.split('?')[0]);
+    }
+  });
+});

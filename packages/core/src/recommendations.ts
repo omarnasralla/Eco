@@ -219,7 +219,11 @@ function debtAdvice(s: FinancialSnapshot): Recommendation[] {
           { label: 'Months saved', value: String(monthsSaved) },
           { label: 'Interest saved', value: fmt(interestSaved) },
         ],
-        actionUrl: '/debts/payoff-plan',
+        // /debts, not /debts/payoff-plan: that route was never built, and the
+        // plan is generated from the debts page itself. The link 404'd, and
+        // Next prefetching it put two 404s in the console on every dashboard
+        // load — which is how it was finally noticed.
+        actionUrl: '/debts',
       });
     }
   }
@@ -288,7 +292,9 @@ function emergencyFundAdvice(s: FinancialSnapshot): Recommendation[] {
         { label: 'Target', value: fmt(s.emergencyFundTargetMinor) },
         { label: 'Monthly surplus', value: fmt(surplus) },
       ],
-      actionUrl: '/goals/emergency-fund',
+      // /goals, not /goals/emergency-fund: the emergency fund is one of the
+      // goals on that page, not a page of its own.
+      actionUrl: '/goals',
     },
   ];
 }
