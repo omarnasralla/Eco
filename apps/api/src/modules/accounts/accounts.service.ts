@@ -36,6 +36,7 @@ function toDto(
     createdAt: account.createdAt.toISOString(),
     balanceCardLast4: account.balanceCardLast4,
     alertChannel: account.alertChannel,
+    alertAliases: account.alertAliases,
     anchor,
   };
 }
@@ -317,6 +318,7 @@ export class AccountsService {
             : new Date(),
           balanceCardLast4: input.balanceCardLast4 ?? null,
           alertChannel: input.alertChannel ?? null,
+          alertAliases: input.alertAliases ?? [],
           // The first account is primary whether or not the box was ticked:
           // one account and no primary is a state with no useful meaning.
           isPrimary: input.isPrimary || isFirst,
@@ -377,6 +379,7 @@ export class AccountsService {
           ...(input.alertChannel !== undefined
             ? { alertChannel: input.alertChannel || null }
             : {}),
+          ...(input.alertAliases !== undefined ? { alertAliases: input.alertAliases } : {}),
         },
       });
     });

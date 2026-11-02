@@ -565,6 +565,14 @@ export const accountSchema = z.object({
    * instead. Null to stop claiming it.
    */
   alertChannel: z.string().trim().max(32).nullish(),
+  /**
+   * Merchant substrings whose alerts mean money arrived in this account.
+   *
+   * Matched case-insensitively as substrings, so "IBL ASHRAFIEH" catches
+   * "IBL ASHRAFIEHASHRAFIEHLB". Blank entries are ignored rather than
+   * matching everything.
+   */
+  alertAliases: z.array(z.string().trim().min(2).max(60)).max(20).optional(),
 });
 
 export const updateAccountSchema = accountSchema.partial();

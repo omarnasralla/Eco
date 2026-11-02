@@ -708,7 +708,41 @@ export class IngestService {
     // double-count: the stated balance already includes it, and an anchored
     // balance applies movements only from the day AFTER. So the expense exists
     // for cash flow and category totals without disturbing the balance.
-    const internal = await this.isOwnAccount(userId, parsed.merchant, account?.id);
+    // Three outcomes, most specific first.
+    //
+    // An alias says the money landed in a particular account of the user's —
+    // cash withdrawn at a named branch — so it is a transfer, and the
+    // destination account gets funded. A bare name match says it went to an
+    // account that reports its own inflows (urpay texts its top-ups with the
+    // exact riyals credited), so this alert records nothing but the balance:
+    // creating a transfer here as well would move the same money twice.
+    // Anything else left the tracked accounts, and that is spending.
+    const destination = await this.accountForAlias(userId, parsed.merchant, account?.id);
+    const internal = destination !== null || (await this.isOwnAccount(userId, parsed.merchant, account?.id));
+
+    if (destination) {
+      await this.prisma.transfer.create({
+        data: {
+          userId,
+          fromAccountId: account?.id ?? null,
+          toAccountId: destination.id,
+          amountMinor: BigInt(parsed.amountMinor),
+          currency: parsed.currency,
+          // The alert states what left; what arrives in a cash pocket is the
+          // same money, so both sides are the measured figure.
+          receivedMinor: BigInt(parsed.amountMinor),
+          receivedCurrency: parsed.currency,
+          note: `${parsed.merchant} — into ${destination.name}`,
+          occurredOn: fromIsoDate(occurredOn),
+          externalRef: `${reference}:transfer`,
+        },
+      });
+      this.logger.log(
+        `balance transfer user=${userId} ${account?.name ?? 'none'} -> ${destination.name} ` +
+          `${parsed.amountMinor} ${parsed.currency} on=${occurredOn}`,
+      );
+    }
+
     const spend = internal
       ? null
       : await this.capture(
@@ -731,7 +765,7 @@ export class IngestService {
     this.logger.log(
       `balance checkpoint user=${userId} card=${parsed.cardLast4 ?? 'none'} ` +
         `amount=${parsed.amountMinor} ${parsed.currency} balance=${stated} on=${occurredOn} ` +
-        `spent=${internal ? 'no-internal' : 'yes'}`,
+        `spent=${destination ? 'no-transfer' : internal ? 'no-internal' : 'yes'}`,
     );
 
     return {
@@ -747,6 +781,36 @@ export class IngestService {
       needsReview: spend?.needsReview ?? false,
       accountName: account?.name ?? null,
     };
+  }
+
+  /**
+   * The account whose alias this merchant matches, if any.
+   *
+   * An alias is a merchant substring an account's inflows arrive under — a
+   * cash account lists the branch names its withdrawals read as. Checked
+   * before the name match and before spending, because it is the most
+   * specific statement available: the user has said in so many words that
+   * money arriving under this string lands here.
+   */
+  private async accountForAlias(
+    userId: string,
+    merchant: string,
+    exceptAccountId?: string,
+  ): Promise<{ id: string; name: string } | null> {
+    const accounts = await this.prisma.financialAccount.findMany({
+      where: { userId, deletedAt: null },
+      select: { id: true, name: true, alertAliases: true },
+    });
+    const haystack = merchant.toLowerCase();
+    return (
+      accounts.find(
+        (a) =>
+          a.id !== exceptAccountId &&
+          a.alertAliases.some(
+            (alias) => alias.trim().length > 0 && haystack.includes(alias.trim().toLowerCase()),
+          ),
+      ) ?? null
+    );
   }
 
   /**

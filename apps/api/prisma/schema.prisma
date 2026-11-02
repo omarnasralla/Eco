@@ -534,6 +534,8 @@ model FinancialAccount {
   balanceCardLast4    String?  @db.Char(4)
   /// Bank alert channel whose card-less messages belong to this account.
   alertChannel        String?  @db.VarChar(32)
+  /// Merchant substrings in an alert that mean money moved INTO this account.
+  alertAliases        String[]
   isPrimary           Boolean   @default(false)
   /// Reserved for bank aggregation; null while the account is manual.
   providerId          String?   @db.VarChar(60)

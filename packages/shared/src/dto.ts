@@ -690,6 +690,11 @@ export interface AccountDto {
   anchor: BalanceAnchorDto | null;
   /** The bank alert channel whose card-less messages land in this account. */
   alertChannel: string | null;
+  /**
+   * Merchant substrings in a bank alert that mean money moved INTO this
+   * account — the branch names a cash withdrawal reads as, for instance.
+   */
+  alertAliases: string[];
 }
 
 /** What the bank last said this account held, and what has happened since. */

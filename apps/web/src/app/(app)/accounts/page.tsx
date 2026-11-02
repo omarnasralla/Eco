@@ -247,6 +247,7 @@ function AccountDialog({
   const [asOf, setAsOf] = useState(() => new Date().toISOString().slice(0, 10));
   const [balanceCard, setBalanceCard] = useState('');
   const [alertChannel, setAlertChannel] = useState('');
+  const [aliases, setAliases] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -280,6 +281,7 @@ function AccountDialog({
       setAsOf(account.openingBalanceDate);
       setBalanceCard(account.balanceCardLast4 ?? '');
       setAlertChannel(account.alertChannel ?? '');
+      setAliases(account.alertAliases.join(', '));
       reset({
         name: account.name,
         kind: account.kind,
@@ -339,6 +341,12 @@ function AccountDialog({
               // instruction — so it is sent as null rather than omitted.
               balanceCardLast4: balanceCard.length === 4 ? balanceCard : null,
               alertChannel: alertChannel || null,
+              // Blank entries are dropped rather than sent: an empty alias
+              // would match every merchant there is.
+              alertAliases: aliases
+                .split(',')
+                .map((a) => a.trim())
+                .filter((a) => a.length >= 2),
             });
           })}
           className="space-y-4"
@@ -448,6 +456,27 @@ function AccountDialog({
                 Most bank messages name the card, which is how Eco knows the account. For a bank
                 that names none — Neo&apos;s &ldquo;sent you&rdquo; transfers — put its channel here
                 so that money lands in this account. Leave empty unless you know you need it.
+              </p>
+            </div>
+          ) : null}
+
+          {/* Where a bank's own wording for a destination has to be taught,
+              because it is not the user's name for the account. */}
+          {editing ? (
+            <div className="space-y-2">
+              <Label htmlFor="account-aliases">Alerts that mean money arrived here</Label>
+              <Input
+                id="account-aliases"
+                placeholder="IBL ASHRAFIEH, ATM DOWNTOWN"
+                value={aliases}
+                onChange={(e) => setAliases(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Comma separated. When a bank alert&apos;s merchant contains one of these, the money
+                is treated as moving into this account rather than being spent — which is how a
+                cash withdrawal stops looking like a purchase. Matching is case-insensitive and
+                partial, so &ldquo;IBL ASHRAFIEH&rdquo; catches
+                &ldquo;IBL ASHRAFIEHASHRAFIEHLB&rdquo;.
               </p>
             </div>
           ) : null}
