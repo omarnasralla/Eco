@@ -27,6 +27,7 @@ function toDto(goal: SavingsGoal): SavingsGoalDto {
     status: goal.status,
     targetAmountMinor: toNumber(goal.targetAmountMinor),
     currentAmountMinor: toNumber(goal.currentAmountMinor),
+    alreadyCountedMinor: toNumber(goal.alreadyCountedMinor),
     currency: goal.currency,
     deadline: toIsoDate(goal.deadline),
     monthlyContributionMinor: toNumberOrNull(goal.monthlyContributionMinor),
@@ -77,6 +78,9 @@ export class GoalsService {
         type: input.type,
         targetAmountMinor: BigInt(input.targetAmountMinor),
         currentAmountMinor: BigInt(input.currentAmountMinor),
+        // A new goal has no contributions, so its whole starting balance is
+        // the amount the user typed — counted elsewhere unless they say not.
+        alreadyCountedMinor: BigInt(input.alreadyCounted ? input.currentAmountMinor : 0),
         currency: input.currency,
         deadline: input.deadline ? fromIsoDate(input.deadline) : null,
         monthlyContributionMinor:
@@ -102,9 +106,41 @@ export class GoalsService {
     });
     if (!existing) throw new NotFoundException('Savings goal not found');
 
+    // Recomputed whenever the balance or the answer changes.
+    //
+    // Two parts of a balance can be money some other total already reports.
+    // A payment made from an account is one of them: it reserves the money
+    // rather than moving it, so it is still sitting in that account's balance
+    // and the account is where it is counted. The rest of the balance — what
+    // no contribution explains — is counted elsewhere only if the user says
+    // so, which is what `alreadyCounted` answers.
+    let alreadyCountedMinor: bigint | undefined;
+    if (input.currentAmountMinor !== undefined || input.alreadyCounted !== undefined) {
+      const [fromAccounts, contributed] = await Promise.all([
+        this.prisma.goalContribution.aggregate({
+          where: { goalId: id, userId, accountId: { not: null } },
+          _sum: { goalAmountMinor: true },
+        }),
+        this.prisma.goalContribution.aggregate({
+          where: { goalId: id, userId },
+          _sum: { goalAmountMinor: true },
+        }),
+      ]);
+      const balance = input.currentAmountMinor ?? toNumber(existing.currentAmountMinor);
+      const unexplained = Math.max(0, balance - toNumber(contributed._sum.goalAmountMinor ?? 0n));
+      const counted = input.alreadyCounted ?? existing.alreadyCountedMinor > 0n;
+      const reserved = Math.max(0, toNumber(fromAccounts._sum.goalAmountMinor ?? 0n));
+      // Never more than the balance: a goal cannot have more money counted
+      // elsewhere than it holds.
+      alreadyCountedMinor = BigInt(
+        Math.min(balance, reserved + (counted ? unexplained : 0)),
+      );
+    }
+
     const goal = await this.prisma.savingsGoal.update({
       where: { id },
       data: {
+        ...(alreadyCountedMinor !== undefined ? { alreadyCountedMinor } : {}),
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.type !== undefined ? { type: input.type } : {}),
         ...(input.targetAmountMinor !== undefined
@@ -214,10 +250,27 @@ export class GoalsService {
         (m) => m > goal.lastMilestoneNotified,
       );
 
+      // Paying from an account reserves the money rather than moving it, so
+      // it stays inside that account's balance and the account is where it is
+      // counted. Recording it here is what stops net worth adding the same
+      // money a second time under the goal. A payment from no account is
+      // money Eco does not otherwise see, so it adds nothing.
+      const countedElsewhere = Math.max(
+        0,
+        Math.min(
+          updated,
+          toNumber(goal.alreadyCountedMinor) + (input.accountId ? goalAmountMinor : 0),
+        ),
+      );
+
       const saved = await tx.savingsGoal.update({
         where: { id: goalId },
         data: {
           currentAmountMinor: BigInt(updated),
+          // Clamped to the balance above: a withdrawal can leave less in the
+          // goal than was counted elsewhere, and what is no longer in the goal
+          // cannot be excluded from net worth.
+          alreadyCountedMinor: BigInt(countedElsewhere),
           ...(achieved && goal.status !== 'ACHIEVED'
             ? { status: 'ACHIEVED' as const, achievedAt: new Date() }
             : {}),
@@ -269,7 +322,9 @@ export class GoalsService {
   }
 
   /**
-   * Total saved across active goals, in the user's base currency.
+   * Total saved across active goals, in the user's base currency — less the
+   * part of each balance that is cash or loans already counted elsewhere,
+   * which is what lets net worth add this figure without double counting.
    *
    * Goals each carry their own currency, so this cannot be a SUM: adding a
    * riyal balance to a dollar one produces a number that is not money in any
@@ -285,16 +340,41 @@ export class GoalsService {
   async totalSaved(userId: string, userCurrency: string): Promise<number> {
     const goals = await this.prisma.savingsGoal.findMany({
       where: { userId, deletedAt: null, status: { in: ['ACTIVE', 'ACHIEVED'] } },
-      select: { currentAmountMinor: true, currency: true },
+      select: { currentAmountMinor: true, alreadyCountedMinor: true, currency: true },
     });
 
     let total = 0;
     for (const goal of goals) {
-      total += await this.currency.convertForDisplay(
-        toNumber(goal.currentAmountMinor),
-        goal.currency,
-        userCurrency,
+      // Only what is not already in cash or loans. The rest is the same money
+      // the accounts and receivables totals report, set aside under a name.
+      const own = Math.max(
+        0,
+        toNumber(goal.currentAmountMinor) - toNumber(goal.alreadyCountedMinor),
       );
+      total += await this.currency.convertForDisplay(own, goal.currency, userCurrency);
+    }
+    return total;
+  }
+
+  /** Set aside in goals out of money other totals already count. */
+  async totalAlreadyCounted(userId: string, userCurrency: string): Promise<number> {
+    const goals = await this.prisma.savingsGoal.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+        status: { in: ['ACTIVE', 'ACHIEVED'] },
+        alreadyCountedMinor: { gt: 0 },
+      },
+      select: { currentAmountMinor: true, alreadyCountedMinor: true, currency: true },
+    });
+
+    let total = 0;
+    for (const goal of goals) {
+      const counted = Math.min(
+        toNumber(goal.currentAmountMinor),
+        toNumber(goal.alreadyCountedMinor),
+      );
+      total += await this.currency.convertForDisplay(counted, goal.currency, userCurrency);
     }
     return total;
   }

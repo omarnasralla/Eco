@@ -25,7 +25,15 @@ import { parseAmountToMinor } from '../../common/utils/parse-amount';
  * coming back is a refund and belongs in the ledger, whereas a reversal means
  * the money never left and the row should not be there at all.
  */
-export type SmsKind = 'SPEND' | 'RECEIVE' | 'IGNORE' | 'REVERSAL' | 'BALANCE' | 'TRANSFER';
+export type SmsKind =
+  | 'SPEND'
+  | 'RECEIVE'
+  | 'IGNORE'
+  | 'REVERSAL'
+  | 'BALANCE'
+  | 'TRANSFER'
+  /** Money announced before it moves — held until the alert that confirms it. */
+  | 'PENDING';
 
 /** One transaction, read out of a bank's SMS alert. */
 export interface ParsedSms {
@@ -75,11 +83,17 @@ export interface ParsedSms {
 }
 
 /**
+ * The channel urpay's card-less messages arrive on — wallet transfers and
+ * verification codes, neither of which names the card the account is read by.
+ */
+export const URPAY_WALLET_CHANNEL = 'urpay-wallet';
+
+/**
  * The first line of an urpay alert says what it is. Matched before anything
  * else is read, so a Refund can never be mistaken for the purchase it
  * reverses — the two are otherwise identical.
  */
-const URPAY_KINDS: Array<{ match: RegExp; kind: SmsKind }> = [
+const URPAY_KINDS: Array<{ match: RegExp; kind: SmsKind; channel?: string }> = [
   { match: /^\s*(online|pos)\s+purchase/i, kind: 'SPEND' },
   { match: /^\s*refund/i, kind: 'RECEIVE' },
   // "Reversed Transaction" — the charge is being withdrawn, not repaid.
@@ -87,13 +101,19 @@ const URPAY_KINDS: Array<{ match: RegExp; kind: SmsKind }> = [
   // A foreign card purchase. Same event as an Online Purchase, different
   // template: it adds Country and Fees/VAT, and states no date.
   { match: /^\s*international\s+purchase/i, kind: 'SPEND' },
-  // A 3-D Secure one-time code, sent BEFORE the purchase goes through. It
-  // names an amount and a merchant, which is exactly what makes it dangerous:
-  // read as a transaction it would double-count every online purchase, since
-  // the real alert follows separately once the payment completes.
-  { match: /^\s*verification\s+code/i, kind: 'IGNORE' },
-  { match: /^\s*debit via wallet/i, kind: 'SPEND' },
-  { match: /^\s*credit via wallet/i, kind: 'RECEIVE' },
+  // A 3-D Secure one-time code, sent BEFORE the purchase goes through. Read
+  // as a purchase it would double-count every online payment, since the real
+  // alert usually follows. Usually: for some merchants none ever does — two
+  // WHISH MONEY payments were lost while this was ignored. So it is held, and
+  // becomes the purchase only if no alert claims it.
+  { match: /^\s*verification\s+code/i, kind: 'PENDING', channel: URPAY_WALLET_CHANNEL },
+  // Wallet to wallet, to or from a person. These name no card — the money
+  // moves inside the wallet itself — so they carry the wallet's channel, and
+  // the account that claims it receives them. Without one they fell back to
+  // the primary account: riyals sent from urpay were filed against a dollar
+  // bank in Beirut, and urpay's balance never went down.
+  { match: /^\s*debit via wallet/i, kind: 'SPEND', channel: URPAY_WALLET_CHANNEL },
+  { match: /^\s*credit via wallet/i, kind: 'RECEIVE', channel: URPAY_WALLET_CHANNEL },
   // Bank account to e-wallet. The amount stated is what ARRIVED, in the
   // wallet's own currency, which is the exact figure the wallet's balance
   // needs — so this message, not the funding bank's, is what records the move.
@@ -123,8 +143,9 @@ const PATTERNS: Array<{ name: string; parse: (text: string) => ParsedSms | null 
     parse: (text) => {
       // The type comes first. An unrecognised first line is not parsed at all:
       // a new message type must be read by a human before it moves money.
-      const kind = URPAY_KINDS.find((k) => k.match.test(text))?.kind;
-      if (!kind) return null;
+      const type = URPAY_KINDS.find((k) => k.match.test(text));
+      if (!type) return null;
+      const kind = type.kind;
 
       // The code sits after the number on a purchase ("Amount:11.84 SAR") and
       // before it on a reversal ("Amount: SAR 11.84"). Same bank, same alert
@@ -155,6 +176,9 @@ const PATTERNS: Array<{ name: string; parse: (text: string) => ParsedSms | null 
         currency,
         merchant: counterparty ?? destination ?? 'Top up',
         cardLast4: card ? card[1]!.slice(-4) : null,
+        // Only when no card names the account: a card is always the better
+        // identifier, and a channel is the fallback for messages without one.
+        ...(type.channel && !card ? { channel: type.channel } : {}),
         date: statedDate(text),
         fee:
           fee && feeCurrency

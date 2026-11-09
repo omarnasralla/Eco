@@ -98,6 +98,10 @@ export const NOTIFICATION_TYPES = [
   'CAPTURE_UNKNOWN',
   /** A bank reversed a charge, so the expense captured from it was removed. */
   'TRANSACTION_REVERSED',
+  /** The morning summary of what is spendable and what is due. */
+  'DAILY_BRIEFING',
+  /** A want has sat out its cooling-off period and can be decided. */
+  'WANT_READY',
   'SYSTEM',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

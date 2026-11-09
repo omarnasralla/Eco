@@ -135,6 +135,61 @@ model BalanceCheckpoint {
 /// Two amounts because a top-up leaves in dollars and arrives in riyals, and
 /// each side is stated in its own message — `receivedMinor` null means only
 /// one side has been seen.
+/// Money counted by hand, read as the account's balance from that moment.
+///
+/// Not a transaction. The difference from what the ledger expected is derived
+/// — "unaccounted for" — and shrinks as missing movements are found, where a
+/// booked adjustment froze it as spending that was usually nothing of the kind.
+model BalanceCount {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  accountId    String   @db.Uuid
+  /// Signed: an account can genuinely be overdrawn.
+  countedMinor BigInt
+  countedOn    DateTime @db.Date
+  /// Movements recorded after this moment are applied on top of the count.
+  countedAt    DateTime
+  note         String?  @db.VarChar(500)
+  createdAt    DateTime @default(now())
+
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account FinancialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, countedAt])
+  @@map("balance_counts")
+}
+
+/// A message that describes money but cannot be booked when it arrives: a
+/// verification code waiting for its purchase alert, or a reversal waiting
+/// for the charge it cancels. Resolved by the message it was waiting for, or
+/// by the sweep when that never comes.
+model PendingCapture {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  accountId   String?   @db.Uuid
+  /// PURCHASE | REVERSAL
+  kind        String    @db.VarChar(16)
+  amountMinor BigInt
+  currency    String    @db.Char(3)
+  merchant    String    @db.VarChar(160)
+  occurredOn  DateTime  @db.Date
+  externalRef String    @db.VarChar(120)
+  expiresAt   DateTime
+  resolvedAt  DateTime?
+  /// MATCHED | RECORDED | CANCELLED | EXPIRED
+  resolution  String?   @db.VarChar(16)
+  expenseId   String?   @db.Uuid
+  createdAt   DateTime  @default(now())
+
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account FinancialAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, externalRef])
+  @@index([userId, kind, resolvedAt])
+  @@index([resolvedAt, expiresAt])
+  @@map("pending_captures")
+}
+
 model Transfer {
   id               String    @id @default(uuid()) @db.Uuid
   userId           String    @db.Uuid
@@ -184,8 +239,8 @@ model Receivable {
   updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?
 
-  user     User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account  FinancialAccount?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  user     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  FinancialAccount?   @relation(fields: [accountId], references: [id], onDelete: SetNull)
   payments ReceivablePayment[]
 
   @@index([userId, settledAt, deletedAt])
@@ -232,6 +287,10 @@ enum NotificationType {
   CAPTURE_UNKNOWN
   /// A bank reversed a charge, so the expense captured from it was removed.
   TRANSACTION_REVERSED
+  /// The morning summary of what is spendable and what is due.
+  DAILY_BRIEFING
+  /// A want has sat out its cooling-off period and can be decided.
+  WANT_READY
 }
 
 enum RecommendationKind {
@@ -341,6 +400,16 @@ model User {
 
   onboardingCompleted Boolean @default(false)
 
+  /// Hours worked in a normal week, which turns a price into work time.
+  /// Null means the feature is off: there is no honest default for this.
+  workHoursPerWeek Int? @db.SmallInt
+
+  /// The city the briefing's weather is for — picked by name, never taken
+  /// from the device.
+  weatherPlace String? @db.VarChar(160)
+  weatherLat   Float?
+  weatherLon   Float?
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
@@ -370,6 +439,11 @@ model User {
   transfers              Transfer[]
   receivables            Receivable[]
   receivablePayments     ReceivablePayment[]
+  wants                  Want[]
+  tasks                  Task[]
+  balanceCounts          BalanceCount[]
+  pendingCaptures        PendingCapture[]
+  birthdays              Birthday[]
 
   @@index([deletedAt])
   @@map("users")
@@ -471,6 +545,76 @@ model PlannedPurchase {
   @@map("planned_purchases")
 }
 
+/**
+ * Something the user is tempted to buy, held back for a cooling-off period.
+ * Not a PlannedPurchase: that records a decision already made, and this exists
+ * to delay one. Nothing here moves a balance — a want that is bought arrives
+ * as an expense through the same capture as any other purchase.
+ */
+model Want {
+  id          String  @id @default(uuid()) @db.Uuid
+  userId      String  @db.Uuid
+  name        String  @db.VarChar(160)
+  amountMinor BigInt
+  currency    String  @db.Char(3)
+  url         String? @db.VarChar(500)
+  note        String? @db.VarChar(300)
+
+  /// Kept with the row, so changing the default never moves a deadline the
+  /// user has already been given.
+  coolOffHours    Int       @default(48) @db.SmallInt
+  readyAt         DateTime
+  /// Set once the "time is up" push has gone, so it goes exactly once.
+  readyNotifiedAt DateTime?
+  /// Decided one way or the other; the status is derived from these.
+  boughtAt        DateTime?
+  skippedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([readyAt, readyNotifiedAt])
+  @@map("wants")
+}
+
+/// Something to do, optionally by a date. Done is a timestamp, not a flag.
+model Task {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  title     String    @db.VarChar(200)
+  dueOn     DateTime? @db.Date
+  doneAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, doneAt, dueOn])
+  @@map("tasks")
+}
+
+/// A recurring month and day; the year only when known, to say the age.
+model Birthday {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  name      String   @db.VarChar(120)
+  month     Int      @db.SmallInt
+  day       Int      @db.SmallInt
+  year      Int?     @db.SmallInt
+  /// Gift ideas, mostly.
+  note      String?  @db.VarChar(300)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, month, day])
+  @@map("birthdays")
+}
+
 model RefreshToken {
   id        String    @id @default(uuid()) @db.Uuid
   userId    String    @db.Uuid
@@ -531,9 +675,9 @@ model FinancialAccount {
   /// message and the money it moved — and one balance can have several cards.
   cardsLast4          String[]
   /// Card whose bank-stated balance anchors this balance; null = computed.
-  balanceCardLast4    String?  @db.Char(4)
+  balanceCardLast4    String?   @db.Char(4)
   /// Bank alert channel whose card-less messages belong to this account.
-  alertChannel        String?  @db.VarChar(32)
+  alertChannel        String?   @db.VarChar(32)
   /// Merchant substrings in an alert that mean money moved INTO this account.
   alertAliases        String[]
   isPrimary           Boolean   @default(false)
@@ -545,18 +689,20 @@ model FinancialAccount {
   updatedAt           DateTime  @updatedAt
   deletedAt           DateTime?
 
-  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expenses      Expense[]
-  incomeSources IncomeSource[]
-  receipts      IncomeReceipt[]
-  checkpoints   BalanceCheckpoint[]
-  transfersOut  Transfer[]        @relation("TransfersOut")
-  transfersIn   Transfer[]        @relation("TransfersIn")
-  receivables         Receivable[]
-  receivablePayments  ReceivablePayment[]
-  contributions GoalContribution[]
-  debts         Debt[]
-  debtPayments  DebtPayment[]
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expenses           Expense[]
+  incomeSources      IncomeSource[]
+  receipts           IncomeReceipt[]
+  checkpoints        BalanceCheckpoint[]
+  transfersOut       Transfer[]          @relation("TransfersOut")
+  transfersIn        Transfer[]          @relation("TransfersIn")
+  receivables        Receivable[]
+  receivablePayments ReceivablePayment[]
+  contributions      GoalContribution[]
+  debts              Debt[]
+  balanceCounts      BalanceCount[]
+  pendingCaptures    PendingCapture[]
+  debtPayments       DebtPayment[]
 
   @@unique([providerId, externalId])
   @@index([userId, deletedAt])
@@ -845,6 +991,10 @@ model SavingsGoal {
   status                   GoalStatus @default(ACTIVE)
   targetAmountMinor        BigInt
   currentAmountMinor       BigInt     @default(0)
+  /// Of currentAmountMinor, the part that is money already counted elsewhere —
+  /// cash in an account, money lent out. Progress includes it; net worth does
+  /// not, or the same money is counted twice.
+  alreadyCountedMinor      BigInt     @default(0)
   currency                 String     @db.Char(3)
   deadline                 DateTime?  @db.Date
   monthlyContributionMinor BigInt?
@@ -1082,6 +1232,11 @@ model NotificationPreference {
   /// Local times in the user's timezone; nothing is pushed between them.
   quietHoursStart   String?               @db.VarChar(5)
   quietHoursEnd     String?               @db.VarChar(5)
+  /// One push each morning. Opt-in: a daily message nobody asked for is how
+  /// notifications learn to be swiped away unread.
+  dailyBriefing     Boolean               @default(false)
+  /// Local HH:MM in the user's timezone.
+  briefingTime      String                @default("07:30") @db.VarChar(5)
   updatedAt         DateTime              @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 import {
@@ -11,11 +11,20 @@ import {
   LogOut,
   Moon,
   ShieldCheck,
+  Send,
   Smartphone,
   Sun,
+  Sunrise,
   Trash2,
 } from 'lucide-react';
-import { CURRENCIES, type CreatedIngestTokenDto, type IngestTokenDto } from '@eco/shared';
+import {
+  CURRENCIES,
+  type BriefingDto,
+  type CreatedIngestTokenDto,
+  type IngestTokenDto,
+  type NotificationPreferences,
+} from '@eco/shared';
+import { workRateKey } from '@/lib/work-time';
 import { api } from '@/lib/api-client';
 import { isInstalled, pushState, subscribeToPush, type PushState } from '@/lib/push';
 import { useAuth } from '@/lib/auth-provider';
@@ -130,6 +139,10 @@ export default function SettingsPage() {
                 happened, so your history stays consistent.
               </p>
             </div>
+
+            <Separator />
+
+            <WorkHoursField />
           </CardContent>
         </Card>
 
@@ -160,6 +173,8 @@ export default function SettingsPage() {
         </Card>
 
         <NotificationsCard />
+
+        <BriefingCard />
 
         <AutomaticExpensesCard />
 
@@ -513,6 +528,210 @@ function NotificationsCard() {
         {!installed && state !== 'needs-install' ? (
           <p className="text-xs text-muted-foreground">
             Adding Eco to your Home Screen makes notifications more reliable.
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Hours worked in a week — the one input that turns a price into work time.
+ * Empty turns it off; there is no honest default for how long someone works.
+ */
+function WorkHoursField() {
+  const { user, refreshUser } = useAuth();
+  const queryClient = useQueryClient();
+  const [hours, setHours] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setHours(user?.workHoursPerWeek ? String(user.workHoursPerWeek) : '');
+  }, [user?.workHoursPerWeek]);
+
+  const save = useMutation({
+    mutationFn: (value: number | null) => api.patch('/users/me', { workHoursPerWeek: value }),
+    onSuccess: async () => {
+      await refreshUser();
+      await queryClient.invalidateQueries({ queryKey: workRateKey });
+      await queryClient.invalidateQueries({ queryKey: ['wants'] });
+    },
+    onError: () => setError('Could not save that.'),
+  });
+
+  const trimmed = hours.trim();
+  const value = trimmed === '' ? null : Number(trimmed);
+  const valid = value === null || (Number.isInteger(value) && value >= 1 && value <= 100);
+  const unchanged = value === (user?.workHoursPerWeek ?? null);
+
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        setError(null);
+        save.mutate(value);
+      }}
+    >
+      <Label htmlFor="work-hours">Hours you work in a week</Label>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          id="work-hours"
+          inputMode="numeric"
+          placeholder="40"
+          className="w-28"
+          value={hours}
+          onChange={(e) => setHours(e.target.value)}
+        />
+        <Button type="submit" variant="outline" size="sm" disabled={!valid || unchanged || save.isPending}>
+          {save.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+          Save
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Prices are then shown as the hours it took to earn them — your income divided by this.
+        Leave it empty to turn that off.
+      </p>
+      {error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
+/**
+ * The morning briefing: one push a day, at a time the user picks, with what
+ * is spendable today and what is due. Off until asked for, and previewable
+ * before it is, so nobody turns on a daily message without seeing it first.
+ */
+function BriefingCard() {
+  const queryClient = useQueryClient();
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const preferences = useQuery({
+    queryKey: ['notifications', 'preferences'],
+    queryFn: () => api.get<NotificationPreferences>('/notifications/preferences'),
+  });
+  const preview = useQuery({
+    queryKey: ['briefing'],
+    queryFn: () => api.get<BriefingDto>('/briefing'),
+  });
+
+  const update = useMutation({
+    mutationFn: (patch: Partial<NotificationPreferences>) =>
+      api.patch<NotificationPreferences>('/notifications/preferences', patch),
+    onMutate: () => setError(null),
+    onSuccess: (next) => queryClient.setQueryData(['notifications', 'preferences'], next),
+    onError: () => setError('Could not save that.'),
+  });
+
+  const sendNow = useMutation({
+    mutationFn: () =>
+      api.post<BriefingDto & { pushDevices: number; pushOn: boolean }>('/briefing/send'),
+    onMutate: () => {
+      setError(null);
+      setResult(null);
+    },
+    onSuccess: (sent) => {
+      // Said plainly when it cannot have reached a phone, rather than letting
+      // a silent "sent" read as a broken feature.
+      setResult(
+        sent.pushOn && sent.pushDevices > 0
+          ? `Sent to ${sent.pushDevices} device${sent.pushDevices === 1 ? '' : 's'}.`
+          : 'Saved to your notifications, but no device has push turned on — turn it on above to get it on your phone.',
+      );
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    },
+    onError: () => setError('Could not send a briefing.'),
+  });
+
+  const prefs = preferences.data;
+  const on = prefs?.dailyBriefing ?? false;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Sunrise className="size-4 text-primary" aria-hidden />
+          Morning briefing
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          One notification each morning: the weather, what you can spend today, bills due in the
+          next {prefs?.billDueLeadDays ?? 3} days, your top tasks, birthdays coming up, and anything
+          waiting on you. Tapping it opens Today.
+        </p>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex gap-2">
+            {([false, true] as const).map((option) => (
+              <Button
+                key={String(option)}
+                type="button"
+                size="sm"
+                variant={prefs && on === option ? 'default' : 'outline'}
+                disabled={!prefs || update.isPending}
+                onClick={() => update.mutate({ dailyBriefing: option })}
+              >
+                {option ? 'On' : 'Off'}
+              </Button>
+            ))}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="briefing-time">At</Label>
+            <Input
+              id="briefing-time"
+              type="time"
+              className="w-32"
+              value={prefs?.briefingTime ?? '07:30'}
+              disabled={!prefs}
+              onChange={(e) => {
+                if (/^\d{2}:\d{2}$/.test(e.target.value)) {
+                  update.mutate({ briefingTime: e.target.value });
+                }
+              }}
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Your local time. It arrives even during quiet hours — you chose the time.
+        </p>
+
+        {preview.data ? (
+          <div className="rounded-md border bg-muted/40 p-3">
+            <p className="text-xs text-muted-foreground">Today&apos;s would read</p>
+            <p className="mt-1 text-sm font-medium">{preview.data.title}</p>
+            <ul className="mt-1 space-y-0.5 text-sm text-muted-foreground">
+              {preview.data.lines.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => sendNow.mutate()}
+          disabled={sendNow.isPending}
+        >
+          {sendNow.isPending ? (
+            <Loader2 className="size-4 animate-spin" aria-hidden />
+          ) : (
+            <Send className="size-4" aria-hidden />
+          )}
+          Send me one now
+        </Button>
+
+        {result ? <p className="text-sm text-muted-foreground">{result}</p> : null}
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
           </p>
         ) : null}
       </CardContent>

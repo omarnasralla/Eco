@@ -22,6 +22,8 @@ import { detectCurrency, parseAmountToMinor } from '../../common/utils/parse-amo
 import { toNumber } from '../../common/utils/money';
 import { formatMoney } from '@eco/shared';
 import { fromIsoDate, todayIso } from '../../common/utils/dates';
+import { Cron } from '@nestjs/schedule';
+import { plausiblePair } from '@eco/core';
 import { parseTransactionSms } from './sms-parser';
 import type { ParsedSms } from './sms-parser';
 
@@ -39,6 +41,27 @@ const MAX_REFERENCE_LENGTH = 120;
  * the same shop months earlier and delete that instead.
  */
 const REVERSAL_WINDOW_DAYS = 30;
+
+/**
+ * How long a verification code waits for its purchase alert before it is
+ * recorded as the purchase. The alert, when there is one, follows within a
+ * minute or two; fifteen leaves room for a slow network without leaving a
+ * real payment unrecorded for long.
+ */
+const CODE_WAIT_MS = 15 * 60_000;
+
+/** A purchase alert later than this is not the one a code was waiting for. */
+const CODE_CLAIM_MS = 2 * 3_600_000;
+
+/** How far back a late alert may find the code that was already recorded. */
+const LATE_ALERT_MS = 48 * 3_600_000;
+
+/**
+ * How long a reversal waits for the charge it cancels. It arrived 34 minutes
+ * early once; a day is generous for that and short enough that a reversal
+ * which never matches is still reported while it can be looked into.
+ */
+const REVERSAL_WAIT_MS = 24 * 3_600_000;
 
 @Injectable()
 export class IngestService {
@@ -327,6 +350,10 @@ export class IngestService {
       };
     }
 
+    if (parsed.kind === 'PENDING') {
+      return this.holdPurchase(userId, parsed, reference, account, occurredOn);
+    }
+
     if (parsed.kind === 'TRANSFER') {
       return this.recordTransfer(userId, parsed, reference, account, occurredOn);
     }
@@ -412,6 +439,26 @@ export class IngestService {
       };
     }
 
+    // A verification code may be holding this purchase, or already have been
+    // recorded as it; a reversal may already be waiting to cancel it.
+    const held = await this.claimHeld(userId, parsed);
+    if (held.recordedAs) {
+      this.logger.log(
+        `capture alert matched recorded code user=${userId} expense=${held.recordedAs.id}`,
+      );
+      return {
+        kind: parsed.kind,
+        expenseId: held.recordedAs.id,
+        duplicate: true,
+        amountMinor: toNumber(held.recordedAs.amountMinor),
+        currency: held.recordedAs.currency,
+        merchant: held.recordedAs.merchant ?? parsed.merchant,
+        categoryName: held.recordedAs.category.name,
+        needsReview: held.recordedAs.needsReview,
+        accountName: account?.name ?? null,
+      };
+    }
+
     const result = await this.capture(
       userId,
       userCurrency,
@@ -432,7 +479,261 @@ export class IngestService {
       },
       account,
     );
+
+    if (held.code) {
+      await this.prisma.pendingCapture.update({
+        where: { id: held.code.id },
+        data: { expenseId: result.expenseId },
+      });
+    }
+
+    if (held.reversal && !result.duplicate) {
+      // The reversal got here first. The charge is recorded and cancelled in
+      // the same breath, the way it would have been in the right order — the
+      // reversal's key replaces the purchase's, as applyReversal does.
+      await this.prisma.expense.update({
+        where: { id: result.expenseId },
+        data: { deletedAt: new Date(), externalRef: held.reversal.externalRef },
+      });
+      await this.prisma.pendingCapture.update({
+        where: { id: held.reversal.id },
+        data: { resolvedAt: new Date(), resolution: 'CANCELLED', expenseId: result.expenseId },
+      });
+      await this.redis.invalidateUser(userId);
+      void this.notifications
+        .expenseReversed(userId, parsed.merchant, parsed.amountMinor, parsed.currency)
+        .catch((e: Error) => this.logger.warn(`Could not notify: ${e.message}`));
+      this.logger.log(
+        `reversal applied late user=${userId} expense=${result.expenseId} ` +
+          `merchant=${parsed.merchant} amount=${parsed.amountMinor} ${parsed.currency}`,
+      );
+    }
+
     return { ...result, kind: parsed.kind };
+  }
+
+  /**
+   * Hold a verification code until its purchase alert claims it.
+   *
+   * Most online payments send both a code and an alert, and booking both
+   * would count the payment twice. Some send only the code — WHISH MONEY has
+   * never sent anything else — so ignoring it lost the payment entirely. Held,
+   * it is resolved by whichever comes first: the alert, or the sweep.
+   */
+  private async holdPurchase(
+    userId: string,
+    parsed: ParsedSms,
+    reference: string,
+    account: { id: string; name: string; currency: string } | null,
+    occurredOn: string,
+  ): Promise<IngestResultDto & { kind: string }> {
+    const existing = await this.prisma.pendingCapture.findUnique({
+      where: { userId_externalRef: { userId, externalRef: reference } },
+    });
+
+    if (!existing) {
+      // The alert is not always second. One that already landed claims the
+      // code on arrival, so the sweep never records it again.
+      const alreadyAlerted = await this.prisma.expense.findFirst({
+        where: {
+          userId,
+          deletedAt: null,
+          amountMinor: BigInt(parsed.amountMinor),
+          currency: parsed.currency,
+          createdAt: { gte: new Date(Date.now() - CODE_CLAIM_MS) },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      const claimed =
+        alreadyAlerted && sameMerchant(alreadyAlerted.merchant ?? '', parsed.merchant)
+          ? alreadyAlerted
+          : null;
+
+      await this.prisma.pendingCapture.create({
+        data: {
+          userId,
+          accountId: account?.id ?? null,
+          kind: 'PURCHASE',
+          amountMinor: BigInt(parsed.amountMinor),
+          currency: parsed.currency,
+          merchant: parsed.merchant,
+          occurredOn: fromIsoDate(occurredOn),
+          externalRef: reference,
+          expiresAt: new Date(Date.now() + CODE_WAIT_MS),
+          ...(claimed
+            ? { resolvedAt: new Date(), resolution: 'MATCHED', expenseId: claimed.id }
+            : {}),
+        },
+      });
+      this.logger.log(
+        `capture code held user=${userId} merchant=${parsed.merchant} ` +
+          `amount=${parsed.amountMinor} ${parsed.currency} ${claimed ? 'claimed=already-alerted' : 'waiting'}`,
+      );
+    }
+
+    return {
+      kind: parsed.kind,
+      expenseId: existing?.expenseId ?? '',
+      duplicate: existing !== null,
+      amountMinor: parsed.amountMinor,
+      currency: parsed.currency,
+      merchant: parsed.merchant,
+      categoryName: '—',
+      needsReview: false,
+      accountName: account?.name ?? null,
+    };
+  }
+
+  /**
+   * What a purchase alert finds already waiting for it.
+   *
+   * Three things, checked in this order: a code that was already recorded as
+   * this purchase (the alert came late — answer with that row, never a second
+   * one); a code still waiting (the alert claims it); and a reversal that came
+   * before the charge it cancels.
+   */
+  private async claimHeld(userId: string, parsed: ParsedSms) {
+    const now = Date.now();
+    const sameMoney = { amountMinor: BigInt(parsed.amountMinor), currency: parsed.currency };
+
+    const recorded = await this.prisma.pendingCapture.findMany({
+      where: {
+        userId,
+        kind: 'PURCHASE',
+        resolution: 'RECORDED',
+        ...sameMoney,
+        createdAt: { gte: new Date(now - LATE_ALERT_MS) },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    for (const code of recorded) {
+      if (!code.expenseId || !sameMerchant(code.merchant, parsed.merchant)) continue;
+      const expense = await this.prisma.expense.findFirst({
+        where: { id: code.expenseId, deletedAt: null },
+        include: { category: { select: { name: true } } },
+      });
+      if (!expense) continue;
+      await this.prisma.pendingCapture.update({
+        where: { id: code.id },
+        data: { resolution: 'MATCHED' },
+      });
+      return { recordedAs: expense, code: null, reversal: null };
+    }
+
+    const waiting = (
+      await this.prisma.pendingCapture.findMany({
+        where: {
+          userId,
+          kind: 'PURCHASE',
+          resolvedAt: null,
+          ...sameMoney,
+          createdAt: { gte: new Date(now - CODE_CLAIM_MS) },
+        },
+        orderBy: { createdAt: 'asc' },
+      })
+    ).find((code) => sameMerchant(code.merchant, parsed.merchant));
+    if (waiting) {
+      await this.prisma.pendingCapture.update({
+        where: { id: waiting.id },
+        data: { resolvedAt: new Date(), resolution: 'MATCHED' },
+      });
+    }
+
+    const reversal = await this.prisma.pendingCapture.findFirst({
+      where: {
+        userId,
+        kind: 'REVERSAL',
+        resolvedAt: null,
+        ...sameMoney,
+        merchant: { equals: parsed.merchant, mode: 'insensitive' },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return { recordedAs: null, code: waiting ?? null, reversal };
+  }
+
+  /**
+   * Settle what is still held once its wait is over.
+   *
+   * A code nobody claimed becomes the purchase, flagged for review — the user
+   * is the one who knows whether a payment went through, and a code for an
+   * abandoned checkout is the one case this gets wrong. A reversal nobody
+   * claimed is reported, as it always was, a day later than before.
+   */
+  @Cron('* * * * *')
+  async settleHeld(): Promise<void> {
+    if (!(await this.redis.acquireLock('pending-captures', 120))) return;
+    try {
+      const due = await this.prisma.pendingCapture.findMany({
+        where: { resolvedAt: null, expiresAt: { lte: new Date() } },
+        include: {
+          user: { select: { currency: true, deletedAt: true } },
+          account: { select: { id: true, name: true, currency: true } },
+        },
+        orderBy: { expiresAt: 'asc' },
+        take: 100,
+      });
+
+      for (const held of due) {
+        try {
+          if (held.user.deletedAt) {
+            await this.settle(held.id, 'EXPIRED', null);
+            continue;
+          }
+
+          if (held.kind === 'PURCHASE') {
+            const recorded = await this.capture(
+              held.userId,
+              held.user.currency,
+              {
+                amountMinor: toNumber(held.amountMinor),
+                currency: held.currency,
+                merchant: held.merchant,
+                date: held.occurredOn.toISOString().slice(0, 10),
+                reference: `${held.externalRef}:code`,
+                notes: 'Recorded from the verification code — no purchase alert followed it',
+              },
+              held.account,
+            );
+            await this.prisma.expense.update({
+              where: { id: recorded.expenseId },
+              data: { needsReview: true },
+            });
+            await this.settle(held.id, 'RECORDED', recorded.expenseId);
+            this.logger.log(
+              `capture code recorded user=${held.userId} expense=${recorded.expenseId} ` +
+                `merchant=${held.merchant}`,
+            );
+            continue;
+          }
+
+          await this.notifications.reversalUnmatched(
+            held.userId,
+            held.merchant,
+            toNumber(held.amountMinor),
+            held.currency,
+          );
+          await this.settle(held.id, 'EXPIRED', null);
+          this.logger.warn(
+            `reversal unmatched after waiting user=${held.userId} merchant=${held.merchant} ` +
+              `amount=${toNumber(held.amountMinor)} ${held.currency}`,
+          );
+        } catch (error) {
+          // One bad row must not hold up the rest; it is retried next minute.
+          this.logger.warn(`Could not settle held capture ${held.id}: ${(error as Error).message}`);
+        }
+      }
+    } finally {
+      await this.redis.releaseLock('pending-captures');
+    }
+  }
+
+  private async settle(id: string, resolution: string, expenseId: string | null) {
+    await this.prisma.pendingCapture.update({
+      where: { id },
+      data: { resolvedAt: new Date(), resolution, ...(expenseId ? { expenseId } : {}) },
+    });
   }
 
   /**
@@ -501,19 +802,41 @@ export class IngestService {
     });
 
     if (!match) {
-      // Told, not swallowed. A reversal with nothing to cancel means either the
-      // charge was never captured or it was already removed by hand, and both
-      // are things to look at rather than to discard in silence.
-      void this.notifications
-        .reversalUnmatched(userId, parsed.merchant, parsed.amountMinor, parsed.currency)
-        .catch((e: Error) => this.logger.warn(`Could not notify: ${e.message}`));
-      this.logger.warn(
-        `reversal unmatched user=${userId} merchant=${parsed.merchant} ` +
-          `amount=${parsed.amountMinor} ${parsed.currency} on=${parsed.date}`,
+      // Nothing to cancel yet — which does not mean nothing to cancel. The
+      // reversal of a Jeeny hold once arrived 34 minutes before the charge it
+      // undid, and refusing it left that charge standing for good. So it
+      // waits; the charge is cancelled when it arrives, and only a reversal
+      // still unmatched a day later is reported, as this one used to be.
+      await this.prisma.pendingCapture.upsert({
+        where: { userId_externalRef: { userId, externalRef: reference } },
+        create: {
+          userId,
+          accountId: account?.id ?? null,
+          kind: 'REVERSAL',
+          amountMinor: BigInt(parsed.amountMinor),
+          currency: parsed.currency,
+          merchant: parsed.merchant,
+          occurredOn: fromIsoDate(occurredOn),
+          externalRef: reference,
+          expiresAt: new Date(Date.now() + REVERSAL_WAIT_MS),
+        },
+        update: {},
+      });
+      this.logger.log(
+        `reversal held user=${userId} merchant=${parsed.merchant} ` +
+          `amount=${parsed.amountMinor} ${parsed.currency} on=${occurredOn} waiting-for-charge`,
       );
-      throw new NotFoundException(
-        'That reversal does not match any recorded expense. Nothing was changed.',
-      );
+      return {
+        kind: parsed.kind,
+        expenseId: '',
+        duplicate: false,
+        amountMinor: parsed.amountMinor,
+        currency: parsed.currency,
+        merchant: parsed.merchant,
+        categoryName: '—',
+        needsReview: false,
+        accountName: account?.name ?? null,
+      };
     }
 
     await this.prisma.expense.update({
@@ -605,6 +928,47 @@ export class IngestService {
         `transfer destination unknown user=${userId} named=${parsed.merchant} — ` +
           `recorded as leaving ${account?.name ?? 'no account'} only`,
       );
+    }
+
+    // The funding bank's alert may have got here first and recorded the
+    // dollars that left, waiting on this message for the riyals. The two
+    // texts land seconds apart and iOS runs one automation at a time, so
+    // which of them arrives — or whether both do — is luck; either alone has
+    // to be enough, and the second must complete the first rather than move
+    // the same money twice.
+    if (account && destination) {
+      const half = await this.findSentHalf(userId, account.id, destination.id, parsed, occurredOn);
+      if (half) {
+        const row = await this.prisma.transfer.update({
+          where: { id: half.id },
+          data: {
+            receivedMinor: BigInt(parsed.amountMinor),
+            receivedCurrency: parsed.currency,
+            note: null,
+            // This message's reference from now on, so a retry of it finds
+            // the row instead of pairing again. The bank's half needs no key
+            // here: its retry stops at its own checkpoint.
+            externalRef: reference,
+          },
+        });
+        await this.redis.invalidateUser(userId);
+        this.logger.log(
+          `transfer completed user=${userId} ${account.name} -> ${destination.name} ` +
+            `sent=${toNumber(half.amountMinor)} ${half.currency} ` +
+            `received=${parsed.amountMinor} ${parsed.currency} on=${occurredOn}`,
+        );
+        return {
+          kind: parsed.kind,
+          expenseId: row.id,
+          duplicate: false,
+          amountMinor: parsed.amountMinor,
+          currency: parsed.currency,
+          merchant: destination.name,
+          categoryName: '—',
+          needsReview: false,
+          accountName: account.name,
+        };
+      }
     }
 
     const row = await this.prisma.transfer.create({
@@ -714,11 +1078,18 @@ export class IngestService {
     // cash withdrawn at a named branch — so it is a transfer, and the
     // destination account gets funded. A bare name match says it went to an
     // account that reports its own inflows (urpay texts its top-ups with the
-    // exact riyals credited), so this alert records nothing but the balance:
-    // creating a transfer here as well would move the same money twice.
-    // Anything else left the tracked accounts, and that is spending.
+    // exact riyals credited): this alert supplies the half that message
+    // cannot — the dollars that left — and pairs with it, whichever arrives
+    // first. Anything else left the tracked accounts, and that is spending.
     const destination = await this.accountForAlias(userId, parsed.merchant, account?.id);
-    const internal = destination !== null || (await this.isOwnAccount(userId, parsed.merchant, account?.id));
+    const own = destination
+      ? null
+      : await this.ownAccountNamed(userId, parsed.merchant, account?.id);
+    const internal = destination !== null || own !== null;
+
+    if (own && account) {
+      await this.recordSentHalf(userId, account, own, parsed, reference, occurredOn);
+    }
 
     if (destination) {
       await this.prisma.transfer.create({
@@ -765,7 +1136,7 @@ export class IngestService {
     this.logger.log(
       `balance checkpoint user=${userId} card=${parsed.cardLast4 ?? 'none'} ` +
         `amount=${parsed.amountMinor} ${parsed.currency} balance=${stated} on=${occurredOn} ` +
-        `spent=${destination ? 'no-transfer' : internal ? 'no-internal' : 'yes'}`,
+        `spent=${destination ? 'no-transfer' : own ? `no-internal to=${own.name}` : 'yes'}`,
     );
 
     return {
@@ -814,7 +1185,7 @@ export class IngestService {
   }
 
   /**
-   * Whether this merchant is one of the user's own accounts.
+   * Which of the user's own accounts this merchant names, if any.
    *
    * A bank writes the destination into the merchant field, so a top-up reads
    * "URPAYRIYADH SA" — the wallet's name with a city stuck to it. Matched as a
@@ -827,20 +1198,166 @@ export class IngestService {
    * purchase is cosmetic, where a purchase mistaken for a transfer is a wrong
    * total.
    */
-  private async isOwnAccount(
+  private async ownAccountNamed(
     userId: string,
     merchant: string,
     exceptAccountId?: string,
-  ): Promise<boolean> {
+  ): Promise<{ id: string; name: string; currency: string } | null> {
     const accounts = await this.prisma.financialAccount.findMany({
       where: { userId, deletedAt: null },
-      select: { id: true, name: true },
+      select: { id: true, name: true, currency: true },
     });
     const haystack = merchant.toLowerCase();
-    return accounts.some(
-      (a) =>
-        a.id !== exceptAccountId && a.name.length >= 4 && haystack.includes(a.name.toLowerCase()),
+    return (
+      accounts.find(
+        (a) =>
+          a.id !== exceptAccountId && a.name.length >= 4 && haystack.includes(a.name.toLowerCase()),
+      ) ?? null
     );
+  }
+
+  /**
+   * The funding bank's half of a move into one of the user's own accounts.
+   *
+   * Completes the transfer the destination's own message already recorded,
+   * when there is one: that row knows the riyals and only guessed the
+   * dollars, in the riyals' own currency, and this states them. Otherwise it
+   * records the move from this side, with the arriving amount left unstated —
+   * the destination's balance converts an estimate until its message, if it
+   * ever comes, states the real one.
+   */
+  private async recordSentHalf(
+    userId: string,
+    from: { id: string; name: string; currency: string },
+    to: { id: string; name: string; currency: string },
+    parsed: ParsedSms,
+    reference: string,
+    occurredOn: string,
+  ): Promise<void> {
+    const candidates = await this.prisma.transfer.findMany({
+      where: {
+        userId,
+        fromAccountId: from.id,
+        toAccountId: to.id,
+        deletedAt: null,
+        receivedMinor: { not: null },
+        occurredOn: this.aroundDay(occurredOn),
+      },
+    });
+
+    let best: { id: string; deviation: number } | null = null;
+    for (const t of candidates) {
+      // Money leaves an account in that account's currency, so a sent side
+      // in any other is the destination's guess — the only kind this may
+      // overwrite. One already in the account's currency was stated; it is
+      // this move only when nothing changed currency and the amount agrees.
+      if (t.currency === from.currency) {
+        const deviation = Math.abs(toNumber(t.amountMinor) - parsed.amountMinor);
+        const same = t.currency === parsed.currency && deviation <= parsed.amountMinor * 0.05;
+        if (same && (!best || deviation < best.deviation)) best = { id: t.id, deviation };
+        continue;
+      }
+      const received = toNumber(t.receivedMinor!);
+      const fair = await this.currency.convertForDisplay(
+        received,
+        t.receivedCurrency!,
+        parsed.currency,
+        occurredOn,
+      );
+      const move = {
+        sentMinor: parsed.amountMinor,
+        sentCurrency: parsed.currency,
+        receivedMinor: received,
+        receivedCurrency: t.receivedCurrency!,
+        fairSentMinor: fair,
+      };
+      if (!plausiblePair(move)) continue;
+      const deviation = Math.abs(parsed.amountMinor - fair);
+      if (!best || deviation < best.deviation) best = { id: t.id, deviation };
+    }
+
+    if (best) {
+      await this.prisma.transfer.update({
+        where: { id: best.id },
+        data: { amountMinor: BigInt(parsed.amountMinor), currency: parsed.currency },
+      });
+      this.logger.log(
+        `transfer completed user=${userId} ${from.name} -> ${to.name} ` +
+          `sent=${parsed.amountMinor} ${parsed.currency} on=${occurredOn}`,
+      );
+      return;
+    }
+
+    await this.prisma.transfer.create({
+      data: {
+        userId,
+        fromAccountId: from.id,
+        toAccountId: to.id,
+        amountMinor: BigInt(parsed.amountMinor),
+        currency: parsed.currency,
+        receivedMinor: null,
+        receivedCurrency: null,
+        note: `${to.name} has not confirmed what arrived yet`,
+        occurredOn: fromIsoDate(occurredOn),
+        externalRef: `${reference}:transfer`,
+      },
+    });
+    this.logger.log(
+      `transfer sent half user=${userId} ${from.name} -> ${to.name} ` +
+        `${parsed.amountMinor} ${parsed.currency} on=${occurredOn} awaiting=${to.name}`,
+    );
+  }
+
+  /**
+   * A transfer recorded from the funding side and still waiting on the
+   * destination's message, which this one may be. Same accounts, a day either
+   * way — the two texts can straddle midnight — and an amount that prices
+   * like the same move; the closest wins when a day holds two.
+   */
+  private async findSentHalf(
+    userId: string,
+    fromAccountId: string,
+    toAccountId: string,
+    parsed: ParsedSms,
+    occurredOn: string,
+  ) {
+    const candidates = await this.prisma.transfer.findMany({
+      where: {
+        userId,
+        fromAccountId,
+        toAccountId,
+        deletedAt: null,
+        receivedMinor: null,
+        occurredOn: this.aroundDay(occurredOn),
+      },
+    });
+
+    let best: { row: (typeof candidates)[number]; deviation: number } | null = null;
+    for (const t of candidates) {
+      const sent = toNumber(t.amountMinor);
+      const fair = await this.currency.convertForDisplay(
+        parsed.amountMinor,
+        parsed.currency,
+        t.currency,
+        occurredOn,
+      );
+      const move = {
+        sentMinor: sent,
+        sentCurrency: t.currency,
+        receivedMinor: parsed.amountMinor,
+        receivedCurrency: parsed.currency,
+        fairSentMinor: fair,
+      };
+      if (!plausiblePair(move)) continue;
+      const deviation = Math.abs(sent - fair);
+      if (!best || deviation < best.deviation) best = { row: t, deviation };
+    }
+    return best?.row ?? null;
+  }
+
+  private aroundDay(isoDate: string): { gte: Date; lte: Date } {
+    const day = fromIsoDate(isoDate).getTime();
+    return { gte: new Date(day - 86_400_000), lte: new Date(day + 86_400_000) };
   }
 
   /**
@@ -1063,4 +1580,18 @@ function toTokenDto(row: {
     createdAt: row.createdAt.toISOString(),
     revokedAt: row.revokedAt?.toISOString() ?? null,
   };
+}
+
+/**
+ * Whether two names are the same merchant as two different alerts spell it:
+ * "Amazon" on the code, "Amazon s" on the purchase. Compared on letters and
+ * digits, by whichever is the shorter prefix — and never on fewer than three,
+ * so "A" does not match everything.
+ */
+function sameMerchant(a: string, b: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const x = norm(a);
+  const y = norm(b);
+  const n = Math.min(x.length, y.length, 6);
+  return n >= 3 && x.slice(0, n) === y.slice(0, n);
 }

@@ -22,6 +22,8 @@ export function toUserDto(user: User): UserDto {
     emailVerified: user.emailVerified,
     twoFactorEnabled: user.twoFactorEnabled,
     financialGoals: (user.financialGoals as Record<string, unknown> | null) ?? null,
+    workHoursPerWeek: user.workHoursPerWeek,
+    weatherPlace: user.weatherPlace,
     createdAt: user.createdAt.toISOString(),
   };
 }

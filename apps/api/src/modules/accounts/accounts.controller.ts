@@ -71,14 +71,14 @@ export class AccountsController {
   @Post(':id/reconcile')
   @Audit('UPDATE', 'FinancialAccount')
   @ApiOperation({
-    summary: 'Set the balance to a hand-counted figure, recording the difference',
+    summary: 'Read the balance from a hand count; the difference is shown, not booked',
   })
   async reconcile(
     @CurrentUser() user: { id: string; currency: string },
     @Param('id', ParseUUIDPipe) id: string,
     @Body(zodBody(reconcileAccountSchema)) dto: ReconcileAccountInput,
   ) {
-    return this.accounts.reconcile(user.id, id, dto, user.currency);
+    return this.accounts.reconcile(user.id, id, dto);
   }
 
   @Delete(':id')

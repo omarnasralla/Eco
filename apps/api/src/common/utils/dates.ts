@@ -34,3 +34,39 @@ export function dateToMonth(value: Date | string): string {
 export function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+/**
+ * The calendar date and minute of the day on a user's own clock.
+ *
+ * For anything that has to happen at a local time — a 07:30 briefing is 04:30
+ * UTC in Riyadh and 07:30 in London. An unknown zone falls back to UTC rather
+ * than throwing: a typo in a profile must not stop every other user's job.
+ */
+export function localClock(timezone: string, at: Date = new Date()): { date: string; minutes: number } {
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(at);
+  } catch {
+    return timezone === 'UTC' ? { date: at.toISOString().slice(0, 10), minutes: 0 } : localClock('UTC', at);
+  }
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? '00';
+  return {
+    date: `${part('year')}-${part('month')}-${part('day')}`,
+    minutes: Number(part('hour')) * 60 + Number(part('minute')),
+  };
+}
+
+/** "07:30" → 450. */
+export function hhmmToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+}

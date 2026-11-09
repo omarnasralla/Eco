@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { CheckCircle2, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
+import { CheckCircle2, Loader2, Minus, Pencil, Plus, Trash2 } from 'lucide-react';
 import {
   GOAL_TYPES,
   GOAL_TYPE_LABELS,
@@ -57,6 +57,9 @@ function GoalsContent() {
 
   const [addOpen, setAddOpen] = useState(searchParams.get('new') === '1');
   const [contributeTo, setContributeTo] = useState<SavingsGoalDto | null>(null);
+  // Paying in and taking back out are the same form with the sign flipped, so
+  // one dialog serves both and the direction is remembered here.
+  const [direction, setDirection] = useState<'in' | 'out'>('in');
   const [editing, setEditing] = useState<SavingsGoalDto | null>(null);
   const accounts = useQuery({ queryKey: queryKeys.accounts, queryFn: fetchers.accounts });
 
@@ -166,11 +169,29 @@ function GoalsContent() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => setContributeTo(goal)}
+                        onClick={() => {
+                          setDirection('in');
+                          setContributeTo(goal);
+                        }}
                       >
                         <Plus className="size-4" aria-hidden />
                         Add money
                       </Button>
+                      {/* Only once there is something to take back. An action
+                          that can only fail is worse than no action. */}
+                      {goal.currentAmountMinor > 0 ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setDirection('out');
+                            setContributeTo(goal);
+                          }}
+                        >
+                          <Minus className="size-4" aria-hidden />
+                          Take out
+                        </Button>
+                      ) : null}
                       {/* A goal is a card with several controls, so unlike the
                           expense list the edit action is its own button rather
                           than the whole surface. */}
@@ -215,6 +236,7 @@ function GoalsContent() {
       />
 
       <ContributeDialog
+        direction={direction}
         goal={contributeTo}
         accounts={accounts.data ?? []}
         onClose={() => setContributeTo(null)}
@@ -262,6 +284,7 @@ function GoalDialog({
       type: 'EMERGENCY_FUND',
       targetAmountMinor: 0,
       currentAmountMinor: 0,
+      alreadyCounted: true,
       currency: baseCurrency,
       color: '#0ea5e9',
       icon: 'piggy-bank',
@@ -282,6 +305,9 @@ function GoalDialog({
         type: goal.type,
         targetAmountMinor: goal.targetAmountMinor,
         currentAmountMinor: goal.currentAmountMinor,
+        // A goal from before this was asked has nothing marked, and keeps
+        // that answer until someone changes it.
+        alreadyCounted: goal.alreadyCountedMinor > 0,
         currency: goal.currency,
         color: goal.color ?? '#0ea5e9',
         icon: goal.icon ?? 'piggy-bank',
@@ -300,6 +326,7 @@ function GoalDialog({
         type: 'EMERGENCY_FUND',
         targetAmountMinor: 0,
         currentAmountMinor: 0,
+        alreadyCounted: true,
         currency: goalCurrency,
         color: '#0ea5e9',
         icon: 'piggy-bank',
@@ -384,6 +411,28 @@ function GoalDialog({
             hint="What you have put aside for this already."
             error={errors.currentAmountMinor ? 'That looks implausible against the target.' : undefined}
           />
+
+          {/* Only asked once there is a balance to ask about. Without it, a
+              starting amount made of cash on hand and money lent out was added
+              to net worth a second time. */}
+          {watch('currentAmountMinor') > 0 ? (
+            <label className="flex items-start gap-3 rounded-md border p-3 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 accent-primary"
+                checked={watch('alreadyCounted') ?? true}
+                onChange={(e) => setValue('alreadyCounted', e.target.checked)}
+              />
+              <span>
+                <span className="font-medium">This money is already in Eco</span>
+                <span className="block text-muted-foreground">
+                  It is part of your cash, an account or money lent out — set aside for this goal,
+                  not extra. Untick it only if it sits somewhere Eco does not track, like a
+                  separate savings account.
+                </span>
+              </span>
+            </label>
+          ) : null}
 
           <div className="space-y-2">
             <Label htmlFor="goal-type">Type</Label>
@@ -484,19 +533,30 @@ function GoalDialog({
   );
 }
 
+/**
+ * Money into a goal, or back out of it.
+ *
+ * One form for both: a withdrawal is a payment with the sign flipped, and the
+ * account that receives it is the same field as the account that funded it.
+ * Keeping them together is what guarantees the two directions agree about
+ * currency, dates and which account is involved.
+ */
 function ContributeDialog({
   goal,
+  direction,
   accounts,
   onClose,
   locale,
   onSaved,
 }: {
   goal: SavingsGoalDto | null;
+  direction: 'in' | 'out';
   accounts: AccountDto[];
   onClose: () => void;
   locale: string;
   onSaved: () => void;
 }) {
+  const takingOut = direction === 'out';
   const [amount, setAmount] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [accountId, setAccountId] = useState<string | null | undefined>(undefined);
@@ -548,29 +608,45 @@ function ContributeDialog({
   const onSubmit = handleSubmit((values) => {
     setFormError(null);
     // Same joining as the other forms: the picker owns the currency, the form
-    // owns everything else.
-    contribute.mutate({ ...values, currency, accountId: accountId ?? null });
+    // owns everything else. A withdrawal is the same record with the sign
+    // flipped, which is what releases the reservation on the account it goes
+    // back to — the balance never moved, so there is nothing to add to it.
+    contribute.mutate({
+      ...values,
+      amountMinor: takingOut ? -Math.abs(values.amountMinor) : values.amountMinor,
+      currency,
+      accountId: accountId ?? null,
+    });
   });
 
   return (
     <Dialog open={goal !== null} onOpenChange={(next) => (next ? undefined : onClose())}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add money</DialogTitle>
+          <DialogTitle>{takingOut ? 'Take money out' : 'Add money'}</DialogTitle>
           <DialogDescription>
-            {goal ? `Paying into ${goal.name}.` : null}
+            {goal
+              ? takingOut
+                ? `Releasing money from ${goal.name} back to an account.`
+                : `Paying into ${goal.name}.`
+              : null}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           <MoneyField
             id="contribution-amount"
-            label="Amount"
+            label={takingOut ? 'Amount to take out' : 'Amount'}
             amount={amount}
             onAmountChange={(raw, minorUnits) => {
               setAmount(raw);
               setValue('amountMinor', minorUnits, { shouldValidate: true });
             }}
+            hint={
+              takingOut && goal
+                ? `${formatMoney(goal.currentAmountMinor, goal.currency, { locale })} is in this goal.`
+                : undefined
+            }
             currency={currency}
             onCurrencyChange={setCurrency}
             // A payment is measured against the goal, so the conversion shown
@@ -587,7 +663,9 @@ function ContributeDialog({
 
           {accounts.length > 0 ? (
             <div className="space-y-2">
-              <Label htmlFor="contribution-account">Taken from</Label>
+              <Label htmlFor="contribution-account">
+                {takingOut ? 'Released back to' : 'Reserved from'}
+              </Label>
               <Select
                 value={accountId ?? 'none'}
                 onValueChange={(v) => {
@@ -605,12 +683,15 @@ function ContributeDialog({
                       {account.name}
                     </SelectItem>
                   ))}
-                  <SelectItem value="none">Not from a tracked account</SelectItem>
+                  <SelectItem value="none">
+                    {takingOut ? 'Not to a tracked account' : 'Not from a tracked account'}
+                  </SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Saving moves money rather than creating it, so this comes out of the account
-                balance. Leave it untracked and the same money counts as both cash and savings.
+                {takingOut
+                  ? 'The money never left, so nothing is paid back in — this account simply stops holding that much aside, and it becomes free to spend again.'
+                  : 'The money stays in the account — it is set aside, not spent, so the balance is unchanged and this much of it is shown as reserved. Leave it untracked and the same money counts as both cash and savings.'}
               </p>
             </div>
           ) : null}
@@ -632,7 +713,7 @@ function ContributeDialog({
             </Button>
             <Button type="submit" disabled={contribute.isPending}>
               {contribute.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
-              Add money
+              {takingOut ? 'Take money out' : 'Add money'}
             </Button>
           </DialogFooter>
         </form>

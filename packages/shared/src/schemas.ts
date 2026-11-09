@@ -140,6 +140,8 @@ export const updateProfileSchema = z.object({
   timezone: z.string().trim().max(64).optional(),
   locale: z.string().trim().max(16).optional(),
   financialGoals: financialGoalPrefsSchema.optional(),
+  /** Hours worked in a normal week; null turns work-time pricing off. */
+  workHoursPerWeek: z.number().int().min(1).max(100).nullable().optional(),
 });
 
 /* ── Income ───────────────────────────────────────────────── */
@@ -273,6 +275,71 @@ export const markPurchasedSchema = z.object({
   expenseId: uuid.nullish(),
 });
 
+/* ── Wants (the cooling-off list) ─────────────────────────── */
+
+/**
+ * Something you are tempted to buy, held back before you can decide. The wait
+ * is the feature: an impulse that survives two days is a want, and one that
+ * does not was never worth the money.
+ */
+export const wantSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  amountMinor: positiveMinorAmount,
+  currency: currencyCode,
+  url: z.string().trim().url().max(500).nullish(),
+  note: z.string().trim().max(300).nullish(),
+  /** A month at most; anything longer is a goal, not a cooling-off period. */
+  coolOffHours: z.number().int().min(1).max(720).default(48),
+});
+
+/** Changing the wait is deliberately not offered: that would be the cheat. */
+export const updateWantSchema = wantSchema.omit({ coolOffHours: true }).partial();
+
+/* ── Tasks, birthdays, weather (the non-money half of the briefing) ── */
+
+export const taskSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  /** Optional: plenty of things to do have no deadline. */
+  dueOn: isoDate.nullish(),
+});
+
+export const updateTaskSchema = taskSchema.partial();
+
+/** Days in each month, with February at 29 so a leap-day birthday is allowed. */
+const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+
+export const birthdaySchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    month: z.number().int().min(1).max(12),
+    day: z.number().int().min(1).max(31),
+    /** Only when known — it says how old they turn. */
+    year: z.number().int().min(1900).max(2100).nullish(),
+    note: z.string().trim().max(300).nullish(),
+  })
+  .refine((v) => v.day <= DAYS_IN_MONTH[v.month - 1]!, {
+    message: 'That month does not have that many days',
+    path: ['day'],
+  });
+
+export const updateBirthdaySchema = birthdaySchema.innerType().partial();
+
+/** A place picked from the city search, stored as given. */
+export const weatherLocationSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+});
+
+export type TaskInput = z.infer<typeof taskSchema>;
+export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
+export type BirthdayInput = z.infer<typeof birthdaySchema>;
+export type UpdateBirthdayInput = z.infer<typeof updateBirthdaySchema>;
+export type WeatherLocationInput = z.infer<typeof weatherLocationSchema>;
+
+export type WantInput = z.infer<typeof wantSchema>;
+export type UpdateWantInput = z.infer<typeof updateWantSchema>;
+
 export type PlannedPurchaseInput = z.infer<typeof plannedPurchaseSchema>;
 export type UpdatePlannedPurchaseInput = z.infer<typeof updatePlannedPurchaseSchema>;
 export type MarkPurchasedInput = z.infer<typeof markPurchasedSchema>;
@@ -332,6 +399,13 @@ export const savingsGoalSchema = z
     type: z.enum(GOAL_TYPES),
     targetAmountMinor: minorAmount.refine((v) => v > 0, 'Set a target above zero'),
     currentAmountMinor: minorAmount.default(0),
+    /**
+     * The amount already saved is money Eco already counts — cash in an
+     * account, money lent out — merely set aside for this goal. On by default:
+     * leaving it off when it should be on counts the same money twice, which
+     * overstates net worth; the reverse only understates it.
+     */
+    alreadyCounted: z.boolean().default(true),
     currency: currencyCode,
     deadline: isoDate.nullish(),
     monthlyContributionMinor: minorAmount.nullish(),
@@ -397,6 +471,13 @@ export const notificationPreferencesSchema = z.object({
   aiInsights: z.boolean().default(true),
   quietHoursStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullish(),
   quietHoursEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullish(),
+  /** One push each morning. Off unless asked for. */
+  dailyBriefing: z.boolean().default(false),
+  /** Local HH:MM, in the user's own timezone. */
+  briefingTime: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Expected a time in HH:MM form')
+    .default('07:30'),
 });
 
 export const registerPushTokenSchema = z.object({

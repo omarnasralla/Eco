@@ -48,6 +48,10 @@ export interface UserDto {
   emailVerified: boolean;
   twoFactorEnabled: boolean;
   financialGoals: Record<string, unknown> | null;
+  /** Null when work-time pricing is off. */
+  workHoursPerWeek: number | null;
+  /** The city the weather is for; null until one is picked. */
+  weatherPlace: string | null;
   createdAt: string;
 }
 
@@ -144,6 +148,109 @@ export interface RenameMerchantResultDto {
   categoryName: string | null;
 }
 
+/**
+ * What an hour of work earns, for restating prices as time.
+ *
+ * Null rate means it cannot be stated — no hours set, or no income to divide —
+ * and the UI then says nothing rather than inventing a figure.
+ */
+export interface WorkRateDto {
+  /** Base-currency minor units earned per hour worked. */
+  hourlyMinor: number | null;
+  currency: string;
+  workHoursPerWeek: number | null;
+  /** Monthly income the rate was divided from. */
+  monthlyIncomeMinor: number;
+  /**
+   * RECURRING when it came from income sources; RECEIVED when there were none
+   * and the last three months of receipts were averaged instead.
+   */
+  basis: 'RECURRING' | 'RECEIVED' | null;
+}
+
+/** COOLING until readyAt, READY until decided. */
+export type WantStatus = 'COOLING' | 'READY' | 'BOUGHT' | 'SKIPPED';
+
+export interface WantDto {
+  id: string;
+  name: string;
+  amountMinor: number;
+  currency: string;
+  /** In the user's base currency, at today's rate. */
+  baseAmountMinor: number;
+  /** Hours of work the base amount costs; null when no rate is known. */
+  workHours: number | null;
+  url: string | null;
+  note: string | null;
+  coolOffHours: number;
+  readyAt: string;
+  status: WantStatus;
+  decidedAt: string | null;
+  createdAt: string;
+}
+
+export interface WantsDto {
+  items: WantDto[];
+  rate: WorkRateDto;
+  /** Everything skipped, in the base currency: money not spent. */
+  skippedMinor: number;
+  skippedWorkHours: number | null;
+  currency: string;
+}
+
+/** Where a task stands on the user's own calendar today. */
+export type TaskStatus = 'OVERDUE' | 'TODAY' | 'UPCOMING' | 'SOMEDAY' | 'DONE';
+
+export interface TaskDto {
+  id: string;
+  title: string;
+  dueOn: string | null;
+  doneAt: string | null;
+  status: TaskStatus;
+  createdAt: string;
+}
+
+export interface BirthdayDto {
+  id: string;
+  name: string;
+  month: number;
+  day: number;
+  year: number | null;
+  note: string | null;
+  /** The next time it falls, on or after today. */
+  nextDate: string;
+  daysUntil: number;
+  /** The age they turn on nextDate; null when the year is unknown. */
+  turning: number | null;
+}
+
+export interface WeatherDto {
+  place: string;
+  date: string;
+  /** "Partly cloudy", "Light rain"… */
+  summary: string;
+  maxC: number;
+  minC: number;
+  /** Highest hourly chance of rain today, 0–100; null when not reported. */
+  rainChancePct: number | null;
+}
+
+export interface WeatherPlaceDto {
+  /** "Riyadh, Riyadh Region, Saudi Arabia" — what is stored and shown. */
+  label: string;
+  latitude: number;
+  longitude: number;
+}
+
+/** The morning briefing, as pushed and as previewed. */
+export interface BriefingDto {
+  /** The user's local date the briefing is for. */
+  date: string;
+  title: string;
+  /** One fact per line, most urgent first. */
+  lines: string[];
+}
+
 export type PlannedPurchaseStatus = 'PLANNED' | 'PURCHASED' | 'CANCELLED';
 
 export interface PlannedPurchaseDto {
@@ -233,6 +340,8 @@ export interface SavingsGoalDto {
   status: GoalStatus;
   targetAmountMinor: number;
   currentAmountMinor: number;
+  /** Of the balance, the part already counted in accounts or loans. */
+  alreadyCountedMinor: number;
   currency: string;
   deadline: string | null;
   monthlyContributionMinor: number | null;
@@ -675,6 +784,13 @@ export interface AccountDto {
   openingBalanceDate: string;
   /** Opening figure plus every transaction assigned since. Computed on read. */
   balanceMinor: number;
+  /**
+   * Of that balance, the part set aside for savings goals funded from this
+   * account. The money has not left — it is spoken for, not spent.
+   */
+  reservedMinor: number;
+  /** `balanceMinor` less `reservedMinor`: what is free to spend. */
+  availableMinor: number;
   /** How many transactions have moved it since the opening date. */
   movementCount: number;
   isPrimary: boolean;
@@ -688,6 +804,11 @@ export interface AccountDto {
   balanceCardLast4: string | null;
   /** Present only while anchored, and only once that card has stated a balance. */
   anchor: BalanceAnchorDto | null;
+  /**
+   * The latest hand count, when the balance is read from one. Null for an
+   * account whose bank states its balance, and for one never counted.
+   */
+  count: BalanceCountDto | null;
   /** The bank alert channel whose card-less messages land in this account. */
   alertChannel: string | null;
   /**
@@ -695,6 +816,23 @@ export interface AccountDto {
    * account — the branch names a cash withdrawal reads as, for instance.
    */
   alertAliases: string[];
+}
+
+/** Money counted by hand, and how far it was from what the ledger expected. */
+export interface BalanceCountDto {
+  id: string;
+  countedMinor: number;
+  countedOn: string;
+  countedAt: string;
+  note: string | null;
+  /** Recorded after the count, in the account's currency. */
+  movementsSinceMinor: number;
+  /**
+   * Counted minus what the ledger expected at that moment. Not spending and
+   * not income: movements nobody recorded, or recorded wrong. Recomputed on
+   * every read, so it shrinks as the missing ones are found.
+   */
+  unaccountedMinor: number;
 }
 
 /** What the bank last said this account held, and what has happened since. */
@@ -729,10 +867,8 @@ export interface ReconciliationDto {
   /** What the system thought the balance was, before this correction. */
   previousBalanceMinor: number;
   date: string;
-  /** The expense created to absorb a shortfall. */
-  expenseId: string | null;
-  /** The one-off receipt created to absorb a surplus. */
-  receiptId: string | null;
+  /** The count recorded. No transaction is: the difference is unaccounted for. */
+  countId: string;
   /** The account, with its balance recomputed — now equal to what you counted. */
   account: AccountDto;
 }
@@ -806,6 +942,36 @@ export interface BalanceFlowDto {
   blindSteps: number;
 }
 
+/**
+ * A move between two of the user's accounts held in different currencies.
+ *
+ * COMPLETE when both messages were seen and the cost can be stated;
+ * otherwise which half is still missing, so a cost is never shown that one
+ * side of the move only guessed at.
+ */
+export interface TransferCostDto {
+  id: string;
+  occurredOn: string;
+  fromAccount: string | null;
+  toAccount: string | null;
+  status: 'COMPLETE' | 'AWAITING_ARRIVAL' | 'AWAITING_SENT';
+  sentMinor: number;
+  sentCurrency: string;
+  receivedMinor: number | null;
+  receivedCurrency: string | null;
+  /** Paid above what arrived was worth at the market; null until COMPLETE. */
+  costMinor: number | null;
+  costPct: number | null;
+  effectiveRate: number | null;
+  marketRate: number | null;
+}
+
+export interface TransferCostsDto {
+  items: TransferCostDto[];
+  /** Summed per sent currency, over COMPLETE moves only. */
+  totals: Array<{ currency: string; costMinor: number; sentMinor: number; moves: number }>;
+}
+
 /** Which headline figure a breakdown explains. */
 export type DashboardMetric =
   | 'income'
@@ -827,6 +993,15 @@ export interface BreakdownLineDto {
   nativeLabel: string | null;
   /** Where it came from, or what it is. */
   detail: string | null;
+  /**
+   * A line that explains the figure without being part of it.
+   *
+   * Reserved cash is the case this exists for: the money is inside the total
+   * and has to stay there, but a total that says nothing about the part
+   * already spoken for reads as money free to spend. A memo states it without
+   * being subtracted twice.
+   */
+  memo?: boolean;
 }
 
 /**
@@ -896,6 +1071,10 @@ export interface ReceivablesSummaryDto {
 export interface AccountsSummaryDto {
   /** Every account converted into the user's base currency and added up. */
   totalMinor: number;
+  /** Of that, what is set aside for savings goals across every account. */
+  reservedMinor: number;
+  /** `totalMinor` less `reservedMinor`: what is free to spend, everywhere. */
+  availableMinor: number;
   currency: string;
   /** Accounts held in a currency with no rate available, so left out. */
   unconvertedCount: number;

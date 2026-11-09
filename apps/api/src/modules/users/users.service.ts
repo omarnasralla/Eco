@@ -32,6 +32,9 @@ export class UsersService {
         ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
         ...(input.locale !== undefined ? { locale: input.locale } : {}),
         ...(input.financialGoals !== undefined ? { financialGoals: input.financialGoals } : {}),
+        ...(input.workHoursPerWeek !== undefined
+          ? { workHoursPerWeek: input.workHoursPerWeek }
+          : {}),
       },
     });
 

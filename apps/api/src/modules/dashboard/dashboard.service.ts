@@ -16,6 +16,7 @@ import {
   type BreakdownLineDto,
   type DashboardBreakdownDto,
   type DashboardMetric,
+  formatMoney,
 } from '@eco/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
@@ -470,7 +471,22 @@ export class DashboardService {
     if (metric === 'cash') {
       const accounts = await this.accounts.findAll(userId);
       const lines: BreakdownLineDto[] = [];
+      let reserved = 0;
       for (const a of accounts) {
+        const provenance = a.anchor
+          ? `bank figure for ···${a.anchor.cardLast4}, ${a.anchor.asOf}`
+          : `${a.movementCount} movement${a.movementCount === 1 ? '' : 's'} since ${a.openingBalanceDate}`;
+        // Said on the account that holds it, because "which account is the
+        // reserved money in" is the next question after "how much".
+        const held =
+          a.reservedMinor > 0
+            ? `${provenance} · ${formatMoney(a.reservedMinor, a.currency)} reserved`
+            : provenance;
+        reserved += await this.currency.convertForDisplay(
+          a.reservedMinor,
+          a.currency,
+          userCurrency,
+        );
         lines.push({
           label: a.name,
           amountMinor: await this.currency.convertForDisplay(
@@ -479,22 +495,38 @@ export class DashboardService {
             userCurrency,
           ),
           nativeLabel: native(a.balanceMinor, a.currency),
-          detail: a.anchor
-            ? `bank figure for ···${a.anchor.cardLast4}, ${a.anchor.asOf}`
-            : `${a.movementCount} movement${a.movementCount === 1 ? '' : 's'} since ${a.openingBalanceDate}`,
+          detail: held,
         });
       }
+
+      const totalMinor = lines.reduce((sum, l) => sum + l.amountMinor, 0);
+
+      // Cash on hand is every balance, and the balances are right — but some
+      // of that money is already promised to a goal, and a total that does not
+      // say so reads as money free to spend. Stated as a memo rather than
+      // subtracted: the cash is genuinely held, it simply is not all free.
+      if (reserved > 0) {
+        lines.push({
+          label: 'Free to spend',
+          amountMinor: totalMinor - reserved,
+          nativeLabel: null,
+          detail: `${formatMoney(reserved, userCurrency)} of this is reserved for savings goals`,
+          memo: true,
+        });
+      }
+
       return {
         ...base,
-        totalMinor: lines.reduce((sum, l) => sum + l.amountMinor, 0),
+        totalMinor,
         lines,
         note: 'Every account, converted at today\'s rate. A balance is a position held now.',
       };
     }
 
-    const [cash, savings, debt, owed] = await Promise.all([
+    const [cash, savings, earmarked, debt, owed] = await Promise.all([
       this.accounts.totalBalance(userId, userCurrency),
       this.goals.totalSaved(userId, userCurrency),
+      this.goals.totalAlreadyCounted(userId, userCurrency),
       this.totalDebt(userId, userCurrency),
       this.receivables.totalOutstanding(userId, userCurrency),
     ]);
@@ -503,7 +535,17 @@ export class DashboardService {
       totalMinor: cash + savings + owed - debt,
       lines: [
         { label: 'Cash on hand', amountMinor: cash, nativeLabel: null, detail: null },
-        { label: 'Savings', amountMinor: savings, nativeLabel: null, detail: null },
+        {
+          label: 'Savings',
+          amountMinor: savings,
+          nativeLabel: null,
+          // Said out loud, so a goal balance missing from this line does not
+          // look like a goal that was lost.
+          detail:
+            earmarked > 0
+              ? `Not counting ${formatMoney(earmarked, userCurrency)} set aside in goals from cash or loans already listed`
+              : null,
+        },
         { label: 'Owed to you', amountMinor: owed, nativeLabel: null, detail: null },
         { label: 'Debt', amountMinor: -debt, nativeLabel: null, detail: null },
       ],

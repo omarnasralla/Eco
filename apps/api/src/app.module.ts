@@ -27,6 +27,11 @@ import { IngestModule } from './modules/ingest/ingest.module';
 import { PlannedModule } from './modules/planned/planned.module';
 import { BalanceModule } from './modules/balance/balance.module';
 import { ReceivablesModule } from './modules/receivables/receivables.module';
+import { WantsModule } from './modules/wants/wants.module';
+import { BriefingModule } from './modules/briefing/briefing.module';
+import { TasksModule } from './modules/tasks/tasks.module';
+import { BirthdaysModule } from './modules/birthdays/birthdays.module';
+import { WeatherModule } from './modules/weather/weather.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { RolesGuard } from './modules/auth/guards/roles.guard';
@@ -106,7 +111,12 @@ import { UsersModule } from './modules/users/users.module';
     PlannedModule,
     BalanceModule,
     ReceivablesModule,
+    WantsModule,
+    TasksModule,
+    BirthdaysModule,
+    WeatherModule,
     DashboardModule,
+    BriefingModule,
     AiModule,
     NotificationsModule,
     ReportsModule,

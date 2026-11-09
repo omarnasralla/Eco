@@ -257,13 +257,17 @@ At:Amazon
 2026-10-22 12:44
 Don't share the code`;
 
-  it('ignores a verification code rather than recording it twice', () => {
+  it('holds a verification code as pending, on the wallet channel, rather than spending it', () => {
+    // Not a purchase yet: the alert usually follows, and booking both would
+    // count the payment twice. Not ignorable either: for some merchants the
+    // code is the only message there ever is.
     expect(parseTransactionSms(OTP)).toEqual({
-      kind: 'IGNORE',
+      kind: 'PENDING',
       amountMinor: 12000,
       currency: 'SAR',
       merchant: 'Amazon',
       cardLast4: null,
+      channel: 'urpay-wallet',
       date: '2026-10-22',
       fee: null,
     });
@@ -381,6 +385,22 @@ Amount:5000 SAR
           'Credit via Wallet From: JOE KEEDY Amount: 33 SAR Date: 23-9-2026 20:07',
         ),
       ).toMatchObject({ kind: 'RECEIVE', merchant: 'JOE KEEDY', amountMinor: 3300 });
+    });
+
+    it('routes wallet transfers by the wallet channel, since they name no card', () => {
+      // Without a channel these fell back to the primary account — a dollar
+      // bank — and the wallet's balance never moved.
+      expect(parseTransactionSms(SENT)).toMatchObject({
+        kind: 'SPEND',
+        cardLast4: null,
+        channel: 'urpay-wallet',
+      });
+      expect(parseTransactionSms(RECEIVED)).toMatchObject({
+        kind: 'RECEIVE',
+        channel: 'urpay-wallet',
+      });
+      // A purchase names its card, and the card stays the identifier.
+      expect(parseTransactionSms(TOPUP)?.channel).toBeUndefined();
     });
 
     it('reads a flattened top up', () => {

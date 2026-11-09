@@ -51,7 +51,11 @@ export function BreakdownDialog({
 
   const data = breakdown.data;
   const money = (minor: number) => formatMoney(minor, data?.currency ?? currency, { locale });
-  const summed = data?.lines.reduce((sum, l) => sum + l.amountMinor, 0) ?? 0;
+  // Memo lines explain the figure rather than make it up, so they are left
+  // out of the sum — counting them would invent a discrepancy and the
+  // "unaccounted for" row below would report it as a finding.
+  const summed =
+    data?.lines.reduce((sum, l) => (l.memo ? sum : sum + l.amountMinor), 0) ?? 0;
   const remainder = data ? data.totalMinor - summed : 0;
 
   return (
@@ -77,22 +81,34 @@ export function BreakdownDialog({
             Nothing recorded for {formatMonth(month, locale)}.
           </p>
         ) : (
-          <div className="space-y-1">
+          // min-w-0: the dialog is a grid, and a grid track grows to the
+          // widest unbreakable line inside it — one long note used to push the
+          // whole dialog off the side of a phone.
+          <div className="min-w-0 space-y-1">
             {data.lines.map((line, i) => (
               <div
                 key={`${line.label}-${i}`}
-                className="flex items-start justify-between gap-3 rounded-md px-1 py-2 text-sm odd:bg-muted/40"
+                className={
+                  line.memo
+                    ? // Set apart from the lines that add up, with a rule above
+                      // it, so it is read as a note on the total rather than
+                      // another component of it.
+                      'mt-1 flex items-start justify-between gap-3 border-t px-1 pt-3 text-sm text-muted-foreground'
+                    : 'flex items-start justify-between gap-3 rounded-md px-1 py-2 text-sm odd:bg-muted/40'
+                }
               >
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{line.label}</p>
+                  {/* Wraps rather than truncates: a detail explains the figure,
+                      and half an explanation is worse than none. */}
                   {line.detail ? (
-                    <p className="truncate text-xs text-muted-foreground">{line.detail}</p>
+                    <p className="break-words text-xs text-muted-foreground">{line.detail}</p>
                   ) : null}
                 </div>
                 <div className="shrink-0 text-right">
                   <p
                     className={`tabular-nums font-medium ${
-                      line.amountMinor < 0 ? 'text-destructive' : ''
+                      !line.memo && line.amountMinor < 0 ? 'text-destructive' : ''
                     }`}
                   >
                     {money(line.amountMinor)}

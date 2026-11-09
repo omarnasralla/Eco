@@ -44,6 +44,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BalanceFlowCard } from '@/components/accounts/balance-flow-card';
+import { TransferCostCard } from '@/components/accounts/transfer-cost-card';
 
 export default function AccountsPage() {
   const { currency, locale } = useMoneyFormat();
@@ -98,6 +99,18 @@ export default function AccountsPage() {
             <p className="tabular mt-2 text-3xl font-semibold">
               {formatMoney(summary.data?.totalMinor ?? 0, currency, { locale })}
             </p>
+            {summary.data && summary.data.reservedMinor > 0 ? (
+              // The headline is everything held, which is the honest figure for
+              // what you have — but not for what you can spend. Both are given,
+              // across every account, so neither has to be worked out by hand.
+              <p className="tabular mt-1 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {formatMoney(summary.data.availableMinor, currency, { locale })}
+                </span>{' '}
+                free to spend ·{' '}
+                {formatMoney(summary.data.reservedMinor, currency, { locale })} reserved for goals
+              </p>
+            ) : null}
             {summary.data && summary.data.unconvertedCount > 0 ? (
               <p className="mt-1 text-xs text-muted-foreground">
                 {summary.data.unconvertedCount} account
@@ -132,7 +145,9 @@ export default function AccountsPage() {
                               they did not build it, they only moved it since. */}
                           {account.anchor
                             ? `bank figure for ···${account.anchor.cardLast4}, ${formatDate(account.anchor.asOf, locale)}`
-                            : account.movementCount > 0
+                            : account.count
+                              ? `counted ${formatDate(account.count.countedOn, locale)}`
+                              : account.movementCount > 0
                               ? `${account.movementCount} transaction${account.movementCount === 1 ? '' : 's'} since ${formatDate(account.openingBalanceDate, locale)}`
                               : `set ${formatDate(account.openingBalanceDate, locale)}`}
                         </p>
@@ -147,6 +162,29 @@ export default function AccountsPage() {
                         >
                           {formatMoney(account.balanceMinor, account.currency, { locale })}
                         </p>
+                        {account.reservedMinor > 0 ? (
+                          // Only what this account has promised to a goal.
+                          // Deliberately not "free", though the arithmetic is
+                          // right: a per-account free figure sitting beside a
+                          // balance reads as the amount there is to spend, and
+                          // that question is answered across every account in
+                          // the header above, not one row at a time.
+                          <p className="tabular text-xs text-muted-foreground">
+                            {formatMoney(account.reservedMinor, account.currency, { locale })}{' '}
+                            reserved for goals
+                          </p>
+                        ) : null}
+                        {/* Named, never booked: what the count found that the
+                            ledger did not — missed or misfiled transactions. */}
+                        {account.count && account.count.unaccountedMinor !== 0 ? (
+                          <p className="tabular text-xs text-amber-600 dark:text-amber-400">
+                            {formatMoney(account.count.unaccountedMinor, account.currency, {
+                              locale,
+                              signDisplay: 'always',
+                            })}{' '}
+                            unaccounted
+                          </p>
+                        ) : null}
                         {account.currency !== currency ? (
                           <p className="text-xs text-muted-foreground">{account.currency}</p>
                         ) : null}
@@ -198,6 +236,7 @@ export default function AccountsPage() {
       <div className="mt-6 space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground">Transfers and fees</h2>
         <BalanceFlowCard />
+        <TransferCostCard />
       </div>
 
       <ReconcileDialog
@@ -556,11 +595,10 @@ function AccountDialog({
 /**
  * Reconcile an account against money counted by hand.
  *
- * The preview is the point. "Set the balance" already exists on the edit
- * dialog, and it reaches the same number by rewriting the opening figure —
- * which silently erases the discrepancy. This says what it is about to record,
- * in words, before it records it: a shortfall becomes spending, a surplus
- * becomes income, and either way the money is accounted for.
+ * The count becomes what the account holds, the way a bank-stated balance
+ * does, and nothing is booked. The difference is shown as unaccounted for —
+ * transactions that were missed or recorded wrong, not spending — and it
+ * shrinks on its own as they are found.
  */
 function ReconcileDialog({
   account,
@@ -628,8 +666,8 @@ function ReconcileDialog({
         <DialogHeader>
           <DialogTitle>Count {account.name}</DialogTitle>
           <DialogDescription>
-            Enter what is really there. Eco records the difference as a transaction, so the balance
-            matches reality and the money still shows up in your spending.
+            Enter what is really there. That becomes the balance. Any difference is shown as
+            unaccounted for — it is not added to your spending or income.
           </DialogDescription>
         </DialogHeader>
 
@@ -641,17 +679,14 @@ function ReconcileDialog({
                   Already matched at <span className="font-medium">{money(result.account.balanceMinor)}</span>.
                   Nothing was recorded.
                 </p>
-              ) : result.outcome === 'SHORTFALL' ? (
-                <p>
-                  Recorded <span className="font-medium">{money(Math.abs(result.differenceMinor))}</span> of
-                  spending under <span className="font-medium">Reconciliation</span>. The balance is
-                  now <span className="font-medium">{money(result.account.balanceMinor)}</span>.
-                </p>
               ) : (
                 <p>
-                  Recorded <span className="font-medium">{money(result.differenceMinor)}</span> as one-off
-                  income. The balance is now{' '}
-                  <span className="font-medium">{money(result.account.balanceMinor)}</span>.
+                  The balance is now{' '}
+                  <span className="font-medium">{money(result.account.balanceMinor)}</span>.{' '}
+                  <span className="font-medium">{money(Math.abs(result.differenceMinor))}</span>{' '}
+                  {result.outcome === 'SHORTFALL' ? 'less' : 'more'} than Eco had is shown as
+                  unaccounted for. Nothing was added to your spending or income — find the missing
+                  transaction and it disappears.
                 </p>
               )}
             </div>
@@ -694,18 +729,10 @@ function ReconcileDialog({
 
             {difference !== null && difference !== 0 ? (
               <p className="rounded-md bg-muted/40 px-3 py-2 text-sm">
-                {difference < 0 ? (
-                  <>
-                    <span className="font-medium">{money(Math.abs(difference))}</span> is missing. It
-                    will be recorded as spending under <span className="font-medium">Reconciliation</span>,
-                    and counts toward your budgets.
-                  </>
-                ) : (
-                  <>
-                    <span className="font-medium">{money(difference)}</span> more than expected. It
-                    will be recorded as one-off income.
-                  </>
-                )}
+                <span className="font-medium">{money(Math.abs(difference))}</span>{' '}
+                {difference < 0 ? 'less' : 'more'} than Eco has. It will be shown as unaccounted for —
+                usually a transaction that was missed or filed against the wrong account — and not
+                added to your spending or income.
               </p>
             ) : null}
 
@@ -745,7 +772,7 @@ function ReconcileDialog({
             <DialogFooter>
               <Button type="submit" disabled={reconcile.isPending || countedMinor === null}>
                 {reconcile.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-                {difference === 0 ? 'Check' : 'Record the difference'}
+                {difference === 0 ? 'Check' : 'Save the count'}
               </Button>
             </DialogFooter>
           </form>

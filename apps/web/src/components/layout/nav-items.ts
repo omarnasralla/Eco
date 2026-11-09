@@ -2,7 +2,9 @@ import {
   Bot,
   Landmark,
   ShieldCheck,
+  Sunrise,
   CreditCard,
+  Hourglass,
   LayoutDashboard,
   PiggyBank,
   Receipt,
@@ -36,10 +38,15 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/expenses', label: 'Expenses', icon: Receipt, primary: true },
   { href: '/assistant', label: 'Eco AI', icon: Bot, primary: true },
   { href: '/budgets', label: 'Budgets', icon: Wallet, primary: true },
+  // Where the morning briefing lands: weather, tasks and birthdays. First in
+  // the More sheet because it is the one screen opened every day.
+  { href: '/today', label: 'Today', icon: Sunrise },
   // Debts is a planning screen visited occasionally, not a daily-entry one, so
   // it yields its tab slot to More — which is what makes Settings, Income,
   // Goals and Reports reachable on a phone at all.
   { href: '/debts', label: 'Debts', icon: CreditCard },
+  // Where an impulse waits out its 48 hours before it can be bought.
+  { href: '/wants', label: 'Cooling off', icon: Hourglass },
   { href: '/income', label: 'Income', icon: TrendingUp },
   { href: '/accounts', label: 'Accounts', icon: Landmark },
   { href: '/goals', label: 'Goals', icon: Target },

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { buildFlow, type BalanceCheckpoint } from '@eco/core';
-import type { BalanceFlowDto } from '@eco/shared';
+import { buildFlow, moveCost, type BalanceCheckpoint } from '@eco/core';
+import type { BalanceFlowDto, TransferCostDto, TransferCostsDto } from '@eco/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CurrencyService } from '../currency/currency.service';
 import { toNumber } from '../../common/utils/money';
@@ -12,6 +12,95 @@ export class BalanceService {
     private readonly prisma: PrismaService,
     private readonly currency: CurrencyService,
   ) {}
+
+  /**
+   * What each move between currencies cost, beyond any fee the chain finds.
+   *
+   * The two are different money and are kept apart: a fee is a debit the
+   * bank made without saying so, found as a gap in its balances; this is the
+   * margin inside the rate, found by valuing what arrived at the market. A
+   * top-up can carry either, both, or neither.
+   *
+   * Valued at the rate stored for the move's own date, so a cost does not
+   * restate itself as the market moves afterwards.
+   */
+  async transferCosts(userId: string): Promise<TransferCostsDto> {
+    const rows = await this.prisma.transfer.findMany({
+      where: { userId, deletedAt: null },
+      orderBy: [{ occurredOn: 'desc' }, { createdAt: 'desc' }],
+      include: {
+        fromAccount: { select: { name: true, currency: true } },
+        toAccount: { select: { name: true, currency: true } },
+      },
+    });
+
+    const items: TransferCostDto[] = [];
+    const totals = new Map<string, { costMinor: number; sentMinor: number; moves: number }>();
+
+    for (const row of rows) {
+      const fromCurrency = row.fromAccount?.currency ?? null;
+      const toCurrency = row.toAccount?.currency ?? row.receivedCurrency ?? null;
+      // Only moves that change currency carry a rate to price.
+      if (!fromCurrency || !toCurrency || fromCurrency === toCurrency) continue;
+
+      const occurredOn = requireIsoDate(row.occurredOn);
+      const sentMinor = toNumber(row.amountMinor);
+      const receivedMinor = row.receivedMinor === null ? null : toNumber(row.receivedMinor);
+      const base = {
+        id: row.id,
+        occurredOn,
+        fromAccount: row.fromAccount?.name ?? null,
+        toAccount: row.toAccount?.name ?? null,
+        sentMinor,
+        sentCurrency: row.currency,
+        receivedMinor,
+        receivedCurrency: row.receivedCurrency,
+        costMinor: null,
+        costPct: null,
+        effectiveRate: null,
+        marketRate: null,
+      };
+
+      // A sent side in anything but the sending account's currency is the
+      // destination's guess at it, not a figure the bank stated.
+      if (row.currency !== fromCurrency) {
+        items.push({ ...base, status: 'AWAITING_SENT' });
+        continue;
+      }
+      if (receivedMinor === null || !row.receivedCurrency) {
+        items.push({ ...base, status: 'AWAITING_ARRIVAL' });
+        continue;
+      }
+
+      const fairSentMinor = await this.currency.convertForDisplay(
+        receivedMinor,
+        row.receivedCurrency,
+        row.currency,
+        occurredOn,
+      );
+      const cost = moveCost({
+        sentMinor,
+        sentCurrency: row.currency,
+        receivedMinor,
+        receivedCurrency: row.receivedCurrency,
+        fairSentMinor,
+      });
+      items.push({ ...base, status: 'COMPLETE', ...(cost ?? {}) });
+
+      if (cost) {
+        const total = totals.get(row.currency) ?? { costMinor: 0, sentMinor: 0, moves: 0 };
+        total.costMinor += cost.costMinor;
+        total.sentMinor += sentMinor;
+        total.moves += 1;
+        totals.set(row.currency, total);
+      }
+    }
+
+    return {
+      items,
+      totals: [...totals].map(([currency, t]) => ({ currency, ...t })),
+    };
+  }
 
   /**
    * Every card's balance chain, newest movement last.

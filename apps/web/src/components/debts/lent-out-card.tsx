@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, HandCoins, Loader2, Plus } from 'lucide-react';
 import {
   formatMoney,
   toMinorUnits,
+  type AccountsSummaryDto,
   type ReceivableDto,
   type ReceivablesSummaryDto,
 } from '@eco/shared';
@@ -25,7 +26,73 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+
+/**
+ * The accounts a returning loan can land in.
+ *
+ * Shared by both dialogs below, because "which account did it go into" is the
+ * same question whether the money came back in instalments or all at once.
+ */
+function useAccountOptions() {
+  const accounts = useQuery({
+    queryKey: ['accounts', 'summary'],
+    queryFn: () => api.get<AccountsSummaryDto>('/accounts/summary'),
+  });
+  const list = accounts.data?.accounts ?? [];
+  return { list, primaryId: list.find((a) => a.isPrimary)?.id ?? list[0]?.id ?? null };
+}
+
+/** The account picker, identical in both dialogs. */
+function AccountPicker({
+  id,
+  value,
+  onChange,
+  accounts,
+}: {
+  id: string;
+  value: string | null;
+  onChange: (next: string | null) => void;
+  accounts: { id: string; name: string }[];
+}) {
+  if (accounts.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>Deposited into</Label>
+      <Select
+        value={value ?? 'none'}
+        onValueChange={(v) => {
+          // Radix emits '' while items register; no item has that value.
+          if (!v) return;
+          onChange(v === 'none' ? null : v);
+        }}
+      >
+        <SelectTrigger id={id}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {accounts.map((a) => (
+            <SelectItem key={a.id} value={a.id}>
+              {a.name}
+            </SelectItem>
+          ))}
+          <SelectItem value="none">Not into a tracked account</SelectItem>
+        </SelectContent>
+      </Select>
+      <p className="text-xs text-muted-foreground">
+        The money has to arrive somewhere. Name the account and its balance goes up by this
+        much; leave it untracked and the loan is cleared with nothing to show for it.
+      </p>
+    </div>
+  );
+}
 
 /**
  * Money lent to people, and what has come back.
@@ -50,10 +117,7 @@ export function LentOutCard() {
   // broadly rather than just this list.
   const refreshAll = () => void queryClient.invalidateQueries();
 
-  const settle = useMutation({
-    mutationFn: (id: string) => api.patch(`/receivables/${id}`, { settled: true }),
-    onSuccess: refreshAll,
-  });
+  const [settling, setSettling] = useState<ReceivableDto | null>(null);
 
   const data = lent.data;
   const money = (minor: number, cur = data?.currency ?? currency) =>
@@ -143,14 +207,9 @@ export function LentOutCard() {
                     <Button size="sm" variant="outline" onClick={() => setRepaying(item)}>
                       Record a repayment
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={settle.isPending}
-                      onClick={() => settle.mutate(item.id)}
-                    >
+                    <Button size="sm" variant="ghost" onClick={() => setSettling(item)}>
                       <Check className="size-4" aria-hidden />
-                      {item.outstandingMinor > 0 ? 'Write it off' : 'Mark settled'}
+                      {item.outstandingMinor > 0 ? 'Close it off' : 'Mark settled'}
                     </Button>
                   </div>
                 ) : null}
@@ -166,6 +225,17 @@ export function LentOutCard() {
         baseCurrency={currency}
         onSaved={() => {
           setAdding(false);
+          refreshAll();
+        }}
+      />
+
+      <SettleDialog
+        key={`settle-${settling?.id ?? 'none'}`}
+        receivable={settling}
+        locale={locale}
+        onClose={() => setSettling(null)}
+        onSaved={() => {
+          setSettling(null);
           refreshAll();
         }}
       />
@@ -291,6 +361,138 @@ function LendDialog({
   );
 }
 
+/**
+ * Closing a loan off, with the one question the old button never asked.
+ *
+ * "Settled" covered two opposite endings. Either the money came back — in
+ * which case it landed in an account and belongs in that balance — or it is
+ * not coming back, which is a loss. The old action silently chose neither: it
+ * cleared what you were owed and credited nothing, so being repaid and being
+ * stiffed moved net worth by exactly the same amount, downwards.
+ *
+ * So the ending is asked for, and only the first of them names an account.
+ */
+function SettleDialog({
+  receivable,
+  locale,
+  onClose,
+  onSaved,
+}: {
+  receivable: ReceivableDto | null;
+  locale: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [outcome, setOutcome] = useState<'repaid' | 'writtenOff'>('repaid');
+  const [error, setError] = useState<string | null>(null);
+  const { list: accounts, primaryId } = useAccountOptions();
+  const [accountId, setAccountId] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!primaryId) return;
+    setAccountId((current) => (current === undefined ? primaryId : current));
+  }, [primaryId]);
+
+  const outstanding = receivable?.outstandingMinor ?? 0;
+
+  const save = useMutation({
+    mutationFn: async () => {
+      // The repayment goes first. If it fails the loan stays open, which is
+      // recoverable; settling first and then failing to record the money
+      // would lose it with no sign that anything went wrong.
+      if (outcome === 'repaid' && outstanding > 0) {
+        await api.post(`/receivables/${receivable!.id}/payments`, {
+          amountMinor: outstanding,
+          currency: receivable!.currency,
+          date: new Date().toISOString().slice(0, 10),
+          accountId: accountId ?? null,
+        });
+      }
+      await api.patch(`/receivables/${receivable!.id}`, { settled: true });
+    },
+    onSuccess: onSaved,
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Could not close that loan.'),
+  });
+
+  const money = (minor: number) =>
+    formatMoney(minor, receivable?.currency ?? 'USD', { locale });
+
+  return (
+    <Dialog open={receivable !== null} onOpenChange={(next) => (next ? undefined : onClose())}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Close off {receivable?.person}</DialogTitle>
+          <DialogDescription>
+            {outstanding > 0
+              ? `${money(outstanding)} is still outstanding. What happened to it?`
+              : 'Everything has come back already, so this just marks it done.'}
+          </DialogDescription>
+        </DialogHeader>
+
+        <form
+          className="space-y-4"
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault();
+            setError(null);
+            save.mutate();
+          }}
+        >
+          {outstanding > 0 ? (
+            <div className="space-y-2">
+              <Label htmlFor="settle-outcome">What happened</Label>
+              <Select
+                value={outcome}
+                onValueChange={(v) => {
+                  if (!v) return;
+                  setOutcome(v as 'repaid' | 'writtenOff');
+                }}
+              >
+                <SelectTrigger id="settle-outcome">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="repaid">I got the {money(outstanding)} back</SelectItem>
+                  <SelectItem value="writtenOff">
+                    Writing it off — it is not coming back
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+
+          {outstanding > 0 && outcome === 'repaid' ? (
+            <AccountPicker
+              id="settle-account"
+              value={accountId ?? null}
+              onChange={setAccountId}
+              accounts={accounts}
+            />
+          ) : null}
+
+          {outstanding > 0 && outcome === 'writtenOff' ? (
+            <p className="text-xs text-muted-foreground">
+              {money(outstanding)} comes off what you are owed and lands in no account, because
+              it is gone. Your net worth falls by that much, which is what happened.
+            </p>
+          ) : null}
+
+          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={save.isPending}>
+              {save.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+              {outstanding > 0 && outcome === 'writtenOff' ? 'Write it off' : 'Close it off'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function RepayDialog({
   receivable,
   locale,
@@ -305,6 +507,14 @@ function RepayDialog({
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [error, setError] = useState<string | null>(null);
+  const { list: accounts, primaryId } = useAccountOptions();
+  const [accountId, setAccountId] = useState<string | null | undefined>(undefined);
+  // Defaults to the primary account once it is known, while leaving a
+  // deliberate choice of "none" alone.
+  useEffect(() => {
+    if (!primaryId) return;
+    setAccountId((current) => (current === undefined ? primaryId : current));
+  }, [primaryId]);
 
   const save = useMutation({
     mutationFn: () =>
@@ -312,6 +522,7 @@ function RepayDialog({
         amountMinor: toMinorUnits(Number(amount), receivable!.currency),
         currency: receivable!.currency,
         date,
+        accountId: accountId ?? null,
       }),
     onSuccess: onSaved,
     onError: (e) =>
@@ -362,6 +573,13 @@ function RepayDialog({
               onChange={(e) => setDate(e.target.value)}
             />
           </div>
+
+          <AccountPicker
+            id="repay-account"
+            value={accountId ?? null}
+            onChange={setAccountId}
+            accounts={accounts}
+          />
 
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
 

@@ -26,6 +26,13 @@ export interface CreateNotificationInput {
    * act on it.
    */
   dedupeKey?: string;
+  /**
+   * The user chose when this arrives — the morning briefing. Delivered by push
+   * alone and regardless of quiet hours: turning on a push at 07:30 did not
+   * ask for an email every morning too, and quiet hours exist for messages
+   * that arrive unbidden, not for one set for a time the user picked.
+   */
+  scheduled?: boolean;
 }
 
 @Injectable()
@@ -85,7 +92,11 @@ export class NotificationsService implements OnModuleInit {
       },
     });
 
-    if (preferences.channels.includes('EMAIL') && !this.isQuietHours(preferences)) {
+    if (
+      !input.scheduled &&
+      preferences.channels.includes('EMAIL') &&
+      !this.isQuietHours(preferences)
+    ) {
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
         select: { email: true, name: true },
@@ -101,7 +112,10 @@ export class NotificationsService implements OnModuleInit {
       }
     }
 
-    if (preferences.channels.includes('PUSH') && !this.isQuietHours(preferences)) {
+    if (
+      preferences.channels.includes('PUSH') &&
+      (input.scheduled || !this.isQuietHours(preferences))
+    ) {
       await this.sendPush(userId, input.title, input.body, input.actionUrl);
     }
 
@@ -162,6 +176,8 @@ export class NotificationsService implements OnModuleInit {
         aiInsights: true,
         quietHoursStart: null,
         quietHoursEnd: null,
+        dailyBriefing: false,
+        briefingTime: '07:30',
       };
     }
 
@@ -174,6 +190,8 @@ export class NotificationsService implements OnModuleInit {
       aiInsights: stored.aiInsights,
       quietHoursStart: stored.quietHoursStart,
       quietHoursEnd: stored.quietHoursEnd,
+      dailyBriefing: stored.dailyBriefing,
+      briefingTime: stored.briefingTime,
     };
   }
 
@@ -199,6 +217,8 @@ export class NotificationsService implements OnModuleInit {
         ? { quietHoursStart: input.quietHoursStart }
         : {}),
       ...(input.quietHoursEnd !== undefined ? { quietHoursEnd: input.quietHoursEnd } : {}),
+      ...(input.dailyBriefing !== undefined ? { dailyBriefing: input.dailyBriefing } : {}),
+      ...(input.briefingTime !== undefined ? { briefingTime: input.briefingTime } : {}),
     };
 
     const updated = await this.prisma.notificationPreference.upsert({
@@ -216,6 +236,8 @@ export class NotificationsService implements OnModuleInit {
       aiInsights: updated.aiInsights,
       quietHoursStart: updated.quietHoursStart,
       quietHoursEnd: updated.quietHoursEnd,
+      dailyBriefing: updated.dailyBriefing,
+      briefingTime: updated.briefingTime,
     };
   }
 
@@ -294,6 +316,10 @@ export class NotificationsService implements OnModuleInit {
       // notifications still needs to know their password was changed.
       case 'SECURITY_ALERT':
       case 'SYSTEM':
+        return true;
+      // The preference decides whether the briefing is *scheduled*, not
+      // whether one may be sent — so "send me one now" works before it is on.
+      case 'DAILY_BRIEFING':
         return true;
       default:
         return true;

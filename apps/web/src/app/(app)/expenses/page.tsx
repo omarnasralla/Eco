@@ -25,6 +25,7 @@ import { fetchers, queryKeys } from '@/lib/queries';
 import { useEntryCurrency } from '@/lib/entry-currency';
 import { useLastCategory } from '@/lib/last-category';
 import { useMoneyFormat } from '@/lib/auth-provider';
+import { useWorkRate, workTimeLabel } from '@/lib/work-time';
 import { addMonths, currentMonth, monthRange, useSelectedMonth } from '@/lib/use-selected-month';
 import { formatDate, formatMonth } from '@/lib/utils';
 import { useChartTheme } from '@/components/charts/chart-theme';
@@ -146,6 +147,9 @@ function ExpensesContent() {
   const reviewCount = awaitingReview.data?.items.length ?? 0;
 
   const money = (minor: number) => formatMoney(minor, currency, { locale });
+  // Null until the hours are set in Settings, and then every row says what it
+  // cost in work as well as in money.
+  const workRate = useWorkRate();
 
   return (
     <>
@@ -311,6 +315,11 @@ function ExpensesContent() {
                       // never mistaken for what was paid.
                       <p className="tabular text-xs text-muted-foreground">
                         {formatMoney(expense.amountMinor, expense.currency, { locale })}
+                      </p>
+                    ) : null}
+                    {workTimeLabel(expense.baseAmountMinor, workRate.data) ? (
+                      <p className="tabular text-xs text-muted-foreground">
+                        {workTimeLabel(expense.baseAmountMinor, workRate.data)} of work
                       </p>
                     ) : null}
                   </div>
