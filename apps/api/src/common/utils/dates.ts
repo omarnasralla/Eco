@@ -31,8 +31,15 @@ export function dateToMonth(value: Date | string): string {
   return typeof value === 'string' ? value.slice(0, 7) : value.toISOString().slice(0, 7);
 }
 
-export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+/**
+ * Today's date — on the user's clock when their timezone is given.
+ *
+ * Without one it is UTC's date, which in Riyadh is still yesterday until
+ * 03:00. Anything that saves a date or shows "today" to a person should pass
+ * theirs; a projection months ahead can afford three hours either way.
+ */
+export function todayIso(timezone?: string | null): string {
+  return timezone ? localClock(timezone).date : new Date().toISOString().slice(0, 10);
 }
 
 /**
@@ -63,6 +70,16 @@ export function localClock(timezone: string, at: Date = new Date()): { date: str
     date: `${part('year')}-${part('month')}-${part('day')}`,
     minutes: Number(part('hour')) * 60 + Number(part('minute')),
   };
+}
+
+/**
+ * Whether a minute of the day falls inside a window, including one that wraps
+ * past midnight (22:00 → 07:00). The end is exclusive.
+ */
+export function withinWindow(minutes: number, start: string, end: string): boolean {
+  const from = hhmmToMinutes(start);
+  const to = hhmmToMinutes(end);
+  return from <= to ? minutes >= from && minutes < to : minutes >= from || minutes < to;
 }
 
 /** "07:30" → 450. */

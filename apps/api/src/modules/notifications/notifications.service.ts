@@ -13,6 +13,7 @@ import { formatMoney } from '@eco/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { MailService } from '../mail/mail.service';
+import { localClock, withinWindow } from '../../common/utils/dates';
 
 export interface CreateNotificationInput {
   type: NotificationType;
@@ -79,6 +80,8 @@ export class NotificationsService implements OnModuleInit {
 
     if (existing) return this.toDto(existing);
 
+    const quiet = await this.isQuietHours(userId, preferences);
+
     const notification = await this.prisma.notification.create({
       data: {
         userId,
@@ -95,7 +98,7 @@ export class NotificationsService implements OnModuleInit {
     if (
       !input.scheduled &&
       preferences.channels.includes('EMAIL') &&
-      !this.isQuietHours(preferences)
+      !quiet
     ) {
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
@@ -114,7 +117,7 @@ export class NotificationsService implements OnModuleInit {
 
     if (
       preferences.channels.includes('PUSH') &&
-      (input.scheduled || !this.isQuietHours(preferences))
+      (input.scheduled || !quiet)
     ) {
       await this.sendPush(userId, input.title, input.body, input.actionUrl);
     }
@@ -326,22 +329,23 @@ export class NotificationsService implements OnModuleInit {
     }
   }
 
-  /** Handles windows that wrap past midnight (22:00 → 08:00). */
-  private isQuietHours(prefs: NotificationPreferences): boolean {
+  /**
+   * Whether it is quiet hours on the user's own clock.
+   *
+   * The window is a local time — "nothing between 22:00 and 07:00" means in
+   * Riyadh, not in UTC. Read against UTC it ran three hours late there: quiet
+   * from 01:00 to 10:00, waking people at 22:30 and silencing the morning.
+   */
+  private async isQuietHours(userId: string, prefs: NotificationPreferences): Promise<boolean> {
     if (!prefs.quietHoursStart || !prefs.quietHoursEnd) return false;
-
-    const now = new Date();
-    const minutes = now.getUTCHours() * 60 + now.getUTCMinutes();
-    const toMinutes = (hhmm: string) => {
-      const [h, m] = hhmm.split(':').map(Number);
-      return (h ?? 0) * 60 + (m ?? 0);
-    };
-
-    const start = toMinutes(prefs.quietHoursStart);
-    const end = toMinutes(prefs.quietHoursEnd);
-
-    return start <= end ? minutes >= start && minutes < end : minutes >= start || minutes < end;
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    const { minutes } = localClock(user?.timezone ?? 'UTC');
+    return withinWindow(minutes, prefs.quietHoursStart, prefs.quietHoursEnd);
   }
+
 
   /**
    * Push delivery.

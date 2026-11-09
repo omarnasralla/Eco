@@ -22,6 +22,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { toNumber } from '../../common/utils/money';
 import { CurrencyService } from '../currency/currency.service';
 import { dateToMonth, fromIsoDate, monthToDate, todayIso } from '../../common/utils/dates';
+import { userToday } from '../../common/utils/user-today';
 
 @Injectable()
 export class BudgetsService {
@@ -67,6 +68,10 @@ export class BudgetsService {
       });
       if (!budget) return null;
 
+      // "Today" is the user's day: from midnight to 03:00 in Riyadh, UTC is
+      // still on yesterday and would report yesterday's spending as today's.
+      const localToday = await userToday(this.prisma, userId);
+
       const [
         spendByCategory,
         committedSpendByCategory,
@@ -77,8 +82,8 @@ export class BudgetsService {
         this.spendByCategory(userId, month),
         this.committedSpendByCategory(userId, month),
         this.excludedTotal(userId, month),
-        this.spentToday(userId, month, false),
-        this.spentToday(userId, month, true),
+        this.spentToday(userId, month, false, localToday),
+        this.spentToday(userId, month, true, localToday),
       ]);
 
       const evaluation = evaluateBudget({
@@ -94,7 +99,7 @@ export class BudgetsService {
         alertThresholdPct: budget.alertThresholdPct,
         // Only treat the month as partially elapsed when it is the current one;
         // a past month is fully spent and a future one has not started.
-        asOf: this.asOfFor(month),
+        asOf: this.asOfFor(month, localToday),
         ...(budget.totalLimitMinor ? { totalLimitMinor: toNumber(budget.totalLimitMinor) } : {}),
       });
 
@@ -121,7 +126,7 @@ export class BudgetsService {
       const convertMinor = await this.displayConverter(budget.currency, allowanceCurrency);
       const allowance = dailyAllowance({
         evaluation,
-        today: todayIso(),
+        today: localToday,
         ...(convertMinor ? { convertMinor } : {}),
       });
 
@@ -132,7 +137,7 @@ export class BudgetsService {
         evaluation,
         spentTodayByCategory,
         committedTodayByCategory,
-        today: todayIso(),
+        today: localToday,
         warnAtPct: budget.alertThresholdPct,
         ...(convertMinor ? { convertMinor } : {}),
       });
@@ -379,8 +384,8 @@ export class BudgetsService {
     userId: string,
     month: string,
     recurringOnly: boolean,
+    today: string,
   ): Promise<Record<string, number>> {
-    const today = todayIso();
     // A day outside the month being viewed has no "today" to report.
     if (today.slice(0, 7) !== month) return {};
 
@@ -486,8 +491,7 @@ export class BudgetsService {
     }
   }
 
-  private asOfFor(month: string): string {
-    const today = todayIso();
+  private asOfFor(month: string, today: string = todayIso()): string {
     const currentMonth = today.slice(0, 7);
     if (month === currentMonth) return today;
     // Past months are complete; future months have not begun. Returning the

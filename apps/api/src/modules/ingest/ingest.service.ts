@@ -22,6 +22,7 @@ import { detectCurrency, parseAmountToMinor } from '../../common/utils/parse-amo
 import { toNumber } from '../../common/utils/money';
 import { formatMoney } from '@eco/shared';
 import { fromIsoDate, todayIso } from '../../common/utils/dates';
+import { userToday } from '../../common/utils/user-today';
 import { Cron } from '@nestjs/schedule';
 import { plausiblePair } from '@eco/core';
 import { parseTransactionSms } from './sms-parser';
@@ -155,7 +156,9 @@ export class IngestService {
     const amountMinor =
       input.amountMinor ?? parseAmountToMinor(input.amount as string | number, currency);
 
-    const date = input.date ?? todayIso();
+    // The user's own date: an Apple Pay tap at 01:30 in Riyadh is today's
+    // spending there, though UTC still calls it yesterday.
+    const date = input.date ?? (await userToday(this.prisma, userId));
     const merchant = input.merchant.trim();
     const { categoryId, categoryName, inferred } = await this.categoryFor(userId, merchant);
 
@@ -310,7 +313,7 @@ export class IngestService {
 
     // An international-purchase alert states no date, so it is filed on the day
     // it arrived — which is the day it was spent, since the alert is immediate.
-    const occurredOn = parsed.date ?? todayIso();
+    const occurredOn = parsed.date ?? (await userToday(this.prisma, userId));
 
     // The message text keyed to this user — stable across retries, different
     // for every genuine transaction.

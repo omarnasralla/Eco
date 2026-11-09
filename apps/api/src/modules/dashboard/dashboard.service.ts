@@ -26,6 +26,7 @@ import { GoalsService } from '../goals/goals.service';
 import { ReceivablesService } from '../receivables/receivables.service';
 import { toNumber } from '../../common/utils/money';
 import { monthToDate, requireIsoDate, todayIso } from '../../common/utils/dates';
+import { userToday } from '../../common/utils/user-today';
 import { CurrencyService } from '../currency/currency.service';
 
 @Injectable()
@@ -240,7 +241,8 @@ export class DashboardService {
 
   /** Debt payments and recurring expenses falling due soon. */
   async upcomingBills(userId: string, days = 14): Promise<UpcomingBillDto[]> {
-    const today = todayIso();
+    // The user's today, so "due tomorrow" in the briefing means their tomorrow.
+    const today = await userToday(this.prisma, userId);
 
     const [debts, recurring] = await Promise.all([
       this.prisma.debt.findMany({
