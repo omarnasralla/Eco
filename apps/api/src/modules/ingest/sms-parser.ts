@@ -103,9 +103,9 @@ const URPAY_KINDS: Array<{ match: RegExp; kind: SmsKind; channel?: string }> = [
   { match: /^\s*international\s+purchase/i, kind: 'SPEND' },
   // A 3-D Secure one-time code, sent BEFORE the purchase goes through. Read
   // as a purchase it would double-count every online payment, since the real
-  // alert usually follows. Usually: for some merchants none ever does — two
-  // WHISH MONEY payments were lost while this was ignored. So it is held, and
-  // becomes the purchase only if no alert claims it.
+  // alert follows — and when none follows, the payment did not happen: both
+  // WHISH MONEY codes with no alert were top-ups that failed. So it is held,
+  // claimed by its alert, and otherwise left to expire. Never booked alone.
   { match: /^\s*verification\s+code/i, kind: 'PENDING', channel: URPAY_WALLET_CHANNEL },
   // Wallet to wallet, to or from a person. These name no card — the money
   // moves inside the wallet itself — so they carry the wallet's channel, and

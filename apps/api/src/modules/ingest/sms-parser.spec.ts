@@ -258,9 +258,8 @@ At:Amazon
 Don't share the code`;
 
   it('holds a verification code as pending, on the wallet channel, rather than spending it', () => {
-    // Not a purchase yet: the alert usually follows, and booking both would
-    // count the payment twice. Not ignorable either: for some merchants the
-    // code is the only message there ever is.
+    // Not a purchase: the alert follows when the payment goes through, and
+    // nothing follows when it fails. Held only so the alert can claim it.
     expect(parseTransactionSms(OTP)).toEqual({
       kind: 'PENDING',
       amountMinor: 12000,

@@ -43,18 +43,13 @@ const MAX_REFERENCE_LENGTH = 120;
 const REVERSAL_WINDOW_DAYS = 30;
 
 /**
- * How long a verification code waits for its purchase alert before it is
- * recorded as the purchase. The alert, when there is one, follows within a
- * minute or two; fifteen leaves room for a slow network without leaving a
- * real payment unrecorded for long.
+ * How long a verification code waits for its purchase alert before it is let
+ * go. The alert, when there is one, follows within a minute or two.
  */
 const CODE_WAIT_MS = 15 * 60_000;
 
 /** A purchase alert later than this is not the one a code was waiting for. */
 const CODE_CLAIM_MS = 2 * 3_600_000;
-
-/** How far back a late alert may find the code that was already recorded. */
-const LATE_ALERT_MS = 48 * 3_600_000;
 
 /**
  * How long a reversal waits for the charge it cancels. It arrived 34 minutes
@@ -439,25 +434,9 @@ export class IngestService {
       };
     }
 
-    // A verification code may be holding this purchase, or already have been
-    // recorded as it; a reversal may already be waiting to cancel it.
+    // A verification code may be holding this purchase; a reversal may
+    // already be waiting to cancel it.
     const held = await this.claimHeld(userId, parsed);
-    if (held.recordedAs) {
-      this.logger.log(
-        `capture alert matched recorded code user=${userId} expense=${held.recordedAs.id}`,
-      );
-      return {
-        kind: parsed.kind,
-        expenseId: held.recordedAs.id,
-        duplicate: true,
-        amountMinor: toNumber(held.recordedAs.amountMinor),
-        currency: held.recordedAs.currency,
-        merchant: held.recordedAs.merchant ?? parsed.merchant,
-        categoryName: held.recordedAs.category.name,
-        needsReview: held.recordedAs.needsReview,
-        accountName: account?.name ?? null,
-      };
-    }
 
     const result = await this.capture(
       userId,
@@ -515,10 +494,11 @@ export class IngestService {
   /**
    * Hold a verification code until its purchase alert claims it.
    *
-   * Most online payments send both a code and an alert, and booking both
-   * would count the payment twice. Some send only the code — WHISH MONEY has
-   * never sent anything else — so ignoring it lost the payment entirely. Held,
-   * it is resolved by whichever comes first: the alert, or the sweep.
+   * A code is sent before a payment is attempted, not after it succeeds. When
+   * the payment goes through an alert follows; when it fails nothing does —
+   * both WHISH MONEY codes with no alert were top-ups that were declined. So a
+   * code is never booked on its own: it is held only so that its alert, early
+   * or late, is recognised as one payment rather than counted twice.
    */
   private async holdPurchase(
     userId: string,
@@ -585,40 +565,12 @@ export class IngestService {
   }
 
   /**
-   * What a purchase alert finds already waiting for it.
-   *
-   * Three things, checked in this order: a code that was already recorded as
-   * this purchase (the alert came late — answer with that row, never a second
-   * one); a code still waiting (the alert claims it); and a reversal that came
-   * before the charge it cancels.
+   * What a purchase alert finds already waiting for it: a code it claims, and
+   * a reversal that came before the charge it cancels.
    */
   private async claimHeld(userId: string, parsed: ParsedSms) {
     const now = Date.now();
     const sameMoney = { amountMinor: BigInt(parsed.amountMinor), currency: parsed.currency };
-
-    const recorded = await this.prisma.pendingCapture.findMany({
-      where: {
-        userId,
-        kind: 'PURCHASE',
-        resolution: 'RECORDED',
-        ...sameMoney,
-        createdAt: { gte: new Date(now - LATE_ALERT_MS) },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    for (const code of recorded) {
-      if (!code.expenseId || !sameMerchant(code.merchant, parsed.merchant)) continue;
-      const expense = await this.prisma.expense.findFirst({
-        where: { id: code.expenseId, deletedAt: null },
-        include: { category: { select: { name: true } } },
-      });
-      if (!expense) continue;
-      await this.prisma.pendingCapture.update({
-        where: { id: code.id },
-        data: { resolution: 'MATCHED' },
-      });
-      return { recordedAs: expense, code: null, reversal: null };
-    }
 
     const waiting = (
       await this.prisma.pendingCapture.findMany({
@@ -650,16 +602,16 @@ export class IngestService {
       orderBy: { createdAt: 'asc' },
     });
 
-    return { recordedAs: null, code: waiting ?? null, reversal };
+    return { code: waiting ?? null, reversal };
   }
 
   /**
    * Settle what is still held once its wait is over.
    *
-   * A code nobody claimed becomes the purchase, flagged for review — the user
-   * is the one who knows whether a payment went through, and a code for an
-   * abandoned checkout is the one case this gets wrong. A reversal nobody
-   * claimed is reported, as it always was, a day later than before.
+   * A code nobody claimed is let go: no alert means the payment did not go
+   * through. Recording it instead turned two declined WHISH top-ups into
+   * spending that never happened. A reversal nobody claimed is reported, as
+   * it always was, a day later than before.
    */
   @Cron('* * * * *')
   async settleHeld(): Promise<void> {
@@ -683,27 +635,10 @@ export class IngestService {
           }
 
           if (held.kind === 'PURCHASE') {
-            const recorded = await this.capture(
-              held.userId,
-              held.user.currency,
-              {
-                amountMinor: toNumber(held.amountMinor),
-                currency: held.currency,
-                merchant: held.merchant,
-                date: held.occurredOn.toISOString().slice(0, 10),
-                reference: `${held.externalRef}:code`,
-                notes: 'Recorded from the verification code — no purchase alert followed it',
-              },
-              held.account,
-            );
-            await this.prisma.expense.update({
-              where: { id: recorded.expenseId },
-              data: { needsReview: true },
-            });
-            await this.settle(held.id, 'RECORDED', recorded.expenseId);
+            await this.settle(held.id, 'EXPIRED', null);
             this.logger.log(
-              `capture code recorded user=${held.userId} expense=${recorded.expenseId} ` +
-                `merchant=${held.merchant}`,
+              `capture code expired user=${held.userId} merchant=${held.merchant} ` +
+                `reason=no-alert-followed`,
             );
             continue;
           }
