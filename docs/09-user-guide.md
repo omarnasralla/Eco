@@ -337,50 +337,44 @@ wobbles across.
 ## 6. When the real money does not match
 
 Balances in Eco are derived: what you said an account held on its opening date,
-plus every expense, receipt, goal contribution and debt payment assigned to it
-since. Nothing is stored as a running total, so an edited or deleted
-transaction corrects the balance instead of leaving it drifted.
+plus every expense, receipt, transfer and debt payment assigned to it since.
+Paying into a savings goal does not move money out of the account — it
+reserves part of the balance, shown beside it, and **free to spend** is what
+is left.
 
-Real life still drifts. You buy a coffee in cash and never enter it, and a
-month later the wallet holds less than Eco thinks.
+Real life still drifts. A text never arrives, a transfer is filed against the
+wrong account, a card fee is never announced — and the wallet holds something
+other than what Eco thinks.
 
 Go to `/accounts` and press the scales icon on the account. Enter what you
-actually counted. Eco shows the difference before it does anything:
+actually counted. That figure becomes the account's balance from that moment,
+the way a bank-stated balance does: everything recorded after the count is
+applied on top of it, and nothing before it can move it.
 
-- **Counted less than Eco says** — the gap is recorded as an expense under
-  **Reconciliation**, dated the day you counted. It counts toward your budgets
-  and appears in your spending like any other expense, because that is what it
-  is: money that left.
-- **Counted more** — the gap is recorded as one-off income, with no recurring
-  source behind it, so it moves the balance without inflating your run rate or
-  any forward projection.
-- **Counted exactly right** — nothing is recorded. A zero-amount transaction
-  would be a row in the ledger that moved no money.
+**Nothing is booked.** The difference between what you counted and what Eco
+expected is shown on the account as **unaccounted**, in amber. It is not
+added to your spending or your income, because in practice it almost never is
+either — when urpay was SAR 165.90 short, every riyal of it turned out to be
+wallet transfers filed under the wrong account, a reversal that arrived
+before its charge, and a card fee no message mentioned.
 
-Either way the balance afterwards equals what you counted.
+Find the missing transaction and enter it (or fix the misfiled one) and the
+unaccounted figure shrinks on its own. The balance does not move, because
+your count already had it right.
 
-The **Reconciliation** category appears the first time you use this, not at
-registration, so it does not clutter the expense picker for people who never
-reconcile it. Like the other seeded categories it can be renamed but not
-deleted, because the transactions pointing at it must keep a category.
+An account whose balance comes from the bank's own alerts — linked to a card
+under "read the balance from" — cannot be counted by hand: the bank's figure
+already is the count.
 
 ### Which correction to use
 
-Editing an account and typing a new balance also makes the balance match —
-Eco solves backwards for the opening figure. That is the right tool when the
-*opening figure* was wrong, for example you mistyped it when adding the
-account. It is the wrong tool for a hand count that disagrees, because the
-missing money disappears into history: the balance is right afterwards and
-nothing records that anything was spent, so your spending totals, budgets and
-savings rate all quietly under-report.
+Editing an account and typing a new balance with a **date** sets the opening
+figure: use it when the starting number was simply wrong. Typing a balance
+**without** a date on an account that has been counted before records another
+count. Rule of thumb: **wrong starting number → edit the account. The money
+does not match today → count it.**
 
-Rule of thumb: **wrong starting number → edit the account. Money actually
-moved and nobody wrote it down → count it.**
-
-One limit: you cannot date a count before the account's opening date. A
-correction dated earlier is not counted as a movement since that date, so the
-balance would not land on what you counted. Eco refuses rather than recording
-the money on a day it did not move.
+One limit: you cannot date a count before the account's opening date.
 
 ## 7. Recording Apple Pay taps automatically
 
@@ -481,6 +475,47 @@ everything else.
   ambiguous. Record one as income, or reconcile the account.
 - The automation can take a few purchases to start firing reliably after you
   create it. This appears to be an iOS quirk, not an Eco one.
+
+## 7b. Recording bank texts automatically
+
+Online purchases, transfers and top-ups never touch Apple Pay, so the tap
+automation cannot see them. Your bank's text alerts can: an iOS automation
+forwards each one to Eco unchanged, and Eco reads it server side.
+
+### The automations
+
+In **Shortcuts → Automation → +**, choose **Message**, set **Message
+Contains**, pick the shortcut that posts to
+`https://eco.169.58.227.114.sslip.io/eco/api/v1/ingest/sms` with your
+`x-eco-token` header and the message as the body, and set **Run Immediately**.
+
+iOS lets one automation match only one word, and the banks do not share one —
+so you need one automation per wording, all running the same shortcut:
+
+| Message contains | Catches |
+|---|---|
+| `Amount` | Every urpay alert: purchases, refunds, reversals, top-ups, wallet transfers, verification codes |
+| `Av.Bal` | IBL's card alerts, which carry the balance the bank states — **without this, IBL never reaches Eco** |
+| `sent you` | Neo's person-to-person transfer requests |
+
+Check a missing message against this table first: on 9 November an IBL alert
+was lost only because it contains no "Amount".
+
+### What happens to each kind
+
+- **Purchases** become expenses on the account whose card they name.
+- **Wallet transfers** ("Debit/Credit via Wallet") name no card and land on
+  urpay through its alert channel.
+- **Top-ups** are recorded from whichever side arrives — the bank's dollars
+  or the wallet's riyals — and the other completes it. Two texts landing
+  together can make iOS skip one; either alone is enough.
+- **Verification codes** are held for fifteen minutes so the purchase alert
+  that follows is recognised as the same payment. A code with no alert is a
+  payment that failed, and nothing is recorded.
+- **Reversals** cancel the charge they name — and if one arrives before its
+  charge, it waits a day for it.
+- **A message Eco cannot read** is refused and appears in your notifications
+  with its text, so a bank changing its wording is visible the same day.
 
 ## 8. Summary of current gaps
 
